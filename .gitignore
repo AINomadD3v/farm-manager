@@ -1,0 +1,335 @@
+# QtScrcpy Phone Farm Management - Git Ignore File
+
+# =============================================================================
+# Original QtScrcpy ignores (preserved)
+# =============================================================================
+/output
+*.user
+/QtScrcpy/*.user
+/server/.gradle
+/server/.idea
+/server/build
+/server/gradle/wrapper/gradle-wrapper.jar
+/server/gradle/wrapper/gradle-wrapper.properties
+/server/gradlew
+/server/gradlew.bat
+/server/local.properties
+/build/
+build-*
+*.DS_Store
+userdata.ini
+Info_Mac.plist
+/ci/build_temp
+
+# =============================================================================
+# Build directories and generated files
+# =============================================================================
+
+# Additional build output directories
+bin/
+lib/
+dist/
+release/
+debug/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# Makefile and Ninja build files
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+
+# =============================================================================
+# Qt and C++ specific
+# =============================================================================
+
+# Qt Creator project files (user-specific)
+*.pro.user
+*.pro.user.*
+*.creator
+*.creator.user*
+*.include
+.qmake.cache
+.qmake.stash
+
+# MOC generated files
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+
+# Qt resource files (compiled)
+*.qm
+*.prl
+
+# Qt Quick compiler generated files
+qmlcache/
+*.jsc
+
+# Object files and libraries
+*.o
+*.lo
+*.slo
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Core dumps
+core.*
+
+# =============================================================================
+# IDE and Editor files
+# =============================================================================
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# Emacs
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# =============================================================================
+# Operating System files
+# =============================================================================
+
+# macOS (additional to existing *.DS_Store)
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# =============================================================================
+# NixOS and Development Environment
+# =============================================================================
+
+# Nix build results
+result
+result-*
+.direnv/
+
+# Development shell artifacts
+*.env
+.envrc.local
+
+# =============================================================================
+# Phone Farm Management specific
+# =============================================================================
+
+# Device configuration and state
+devices.db
+devices.sqlite
+device_cache/
+screenshots/
+recordings/
+
+# Farm management logs
+logs/
+*.log
+farm_*.log
+device_*.log
+
+# Automation scripts (user-created)
+scripts/user/
+automation/user/
+
+# Configuration backups
+config_backup/
+*.ini.bak
+*.conf.bak
+
+# Task scheduler data
+tasks.db
+scheduled_tasks/
+
+# Group configurations
+groups.json.bak
+device_groups.bak
+
+# =============================================================================
+# Temporary and cache files
+# =============================================================================
+
+# General temporary files
+tmp/
+temp/
+cache/
+*.tmp
+*.temp
+*.cache
+
+# Backup files
+*.bak
+*.backup
+
+# Lock files
+*.lock
+.lock
+
+# Package manager files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =============================================================================
+# Security and sensitive information
+# =============================================================================
+
+# SSH keys and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+*.cer
+*.crt
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+secrets/
+credentials/
+
+# Database files with sensitive data
+*.db
+*.sqlite3
+production.db
+
+# =============================================================================
+# Testing and debugging
+# =============================================================================
+
+# Test results
+test_results/
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# Valgrind output
+valgrind.log
+callgrind.out.*
+massif.out.*
+
+# GDB history
+.gdb_history
+
+# Core dumps
+core
+vgcore.*
+
+# =============================================================================
+# Deployment and distribution
+# =============================================================================
+
+# Packaging
+*.deb
+*.rpm
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.dmg
+*.pkg
+
+# AppImage
+*.AppImage
+
+# =============================================================================
+# Farm Management Session Data
+# =============================================================================
+
+# Session recordings and screenshots
+session_*.mp4
+batch_screenshots/
+device_recordings/
+
+# Performance monitoring data
+performance_*.json
+metrics_*.csv
+benchmark_*.log
+
+# Device thumbnails cache
+thumbnails/
+device_previews/
+
+# Automation test results
+automation_results/
+test_reports/
+
+# =============================================================================
+# User-specific customizations
+# =============================================================================
+
+# User interface customizations
+ui_layout.json
+user_preferences.json
+window_state.ini
+
+# Custom key mappings
+custom_keymap.json
+user_shortcuts.conf
+
+# Device-specific configurations
+device_profiles/
+custom_devices.json
