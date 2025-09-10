@@ -10,6 +10,7 @@
 #include "dialog.h"
 #include "ui_dialog.h"
 #include "videoform.h"
+#include "farmviewer.h"
 #include "../groupcontroller/groupcontroller.h"
 
 #ifdef Q_OS_WIN32
@@ -493,6 +494,25 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     if (!success) {
         return;
     }
+    
+    // Check if farm mode is active to prevent dual VideoForm creation
+    bool farmModeActive = FarmViewer::instance().isVisible();
+    qDebug() << "Dialog::onDeviceConnected - Farm mode active:" << farmModeActive;
+    
+    if (farmModeActive) {
+        // Farm mode: Only add to FarmViewer, skip standalone VideoForm creation
+        qDebug() << "Dialog::onDeviceConnected - Farm mode: Adding device to FarmViewer only:" << serial;
+        QString deviceDisplayName = Config::getInstance().getNickName(serial);
+        if (deviceDisplayName.isEmpty()) {
+            deviceDisplayName = deviceName.isEmpty() ? serial : deviceName;
+        }
+        FarmViewer::instance().addDevice(serial, deviceDisplayName, size);
+        GroupController::instance().addDevice(serial);
+        return;
+    }
+    
+    // Normal mode: Create standalone VideoForm
+    qDebug() << "Dialog::onDeviceConnected - Normal mode: Creating standalone VideoForm for:" << serial;
     auto videoForm = new VideoForm(ui->framelessCheck->isChecked(), Config::getInstance().getSkin(), ui->showToolbar->isChecked());
     videoForm->setSerial(serial);
 
@@ -535,9 +555,19 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     GroupController::instance().addDevice(serial);
 }
 
+void Dialog::on_farmViewBtn_clicked()
+{
+    qDebug() << "Dialog::on_farmViewBtn_clicked - Opening Farm Viewer";
+    FarmViewer::instance().showFarmViewer();
+}
+
 void Dialog::onDeviceDisconnected(QString serial)
 {
     GroupController::instance().removeDevice(serial);
+    
+    // Also remove from FarmViewer if it exists
+    FarmViewer::instance().removeDevice(serial);
+    
     auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
     if (!device) {
         return;

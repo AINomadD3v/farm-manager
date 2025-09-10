@@ -241,8 +241,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         z
     )
 
+    # Create ADB deployment script
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy_adb.sh.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/deploy_adb.sh"
+        @ONLY
+    )
+    
     add_custom_command(TARGET ${QSC_PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/linux/adb" "${QSC_DEPLOY_PATH}"
+        COMMAND bash "${CMAKE_CURRENT_BINARY_DIR}/deploy_adb.sh" "${QSC_DEPLOY_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/adb/linux/adb"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/scrcpy-server" "${QSC_DEPLOY_PATH}"
+        COMMENT "Deploying ADB and scrcpy-server"
     )
 endif()

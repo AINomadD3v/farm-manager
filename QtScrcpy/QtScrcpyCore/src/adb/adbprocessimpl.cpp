@@ -30,11 +30,16 @@ const QString &AdbProcessImpl::getAdbPath()
 {
     if (s_adbPath.isEmpty()) {
         QStringList potentialPaths;
-        potentialPaths << QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH")) << g_adbPath
+        QString envPath = QString::fromLocal8Bit(qgetenv("QTSCRCPY_ADB_PATH"));
+        if (!envPath.isEmpty()) {
+            potentialPaths << envPath;  // Environment variable takes priority
+        } else {
+            potentialPaths << g_adbPath;  // Only use config if env var is empty
+        }
 #ifdef Q_OS_WIN32
-                       << QCoreApplication::applicationDirPath() + "/adb.exe";
+        potentialPaths << QCoreApplication::applicationDirPath() + "/adb.exe";
 #else
-                       << QCoreApplication::applicationDirPath() + "/adb";
+        potentialPaths << QCoreApplication::applicationDirPath() + "/adb";
 #endif
 
         for (const QString &path : potentialPaths) {

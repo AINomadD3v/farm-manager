@@ -1,5 +1,5 @@
 {
-  description = "QtScrcpy - Qt-based Android device mirroring and farm management system";
+  description = "QtScrcpy - Enterprise-grade Qt-based Android device mirroring and farm management system";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -13,110 +13,58 @@
   outputs = { self, nixpkgs, flake-utils, android-nixpkgs, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        # Import nixpkgs with global test disabling and optimizations
+        # Optimized nixpkgs with minimal overlays for cache-friendly builds
         pkgs = import nixpkgs {
           inherit system;
           config = {
             allowUnfree = true;
-            # Globally disable tests to prevent any package from running tests
             doCheckByDefault = false;
-            # Additional performance optimizations
             enableParallelBuilding = true;
           };
-          overlays = [
-            # Overlay to ensure all packages have tests disabled
-            (final: prev: {
-              # Override Qt packages to disable tests explicitly
-              qt6 = prev.qt6.overrideScope (qtfinal: qtprev: {
-                qtbase = qtprev.qtbase.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtmultimedia = qtprev.qtmultimedia.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qttools = qtprev.qttools.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtnetworkauth = qtprev.qtnetworkauth.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtwayland = qtprev.qtwayland.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtdeclarative = qtprev.qtdeclarative.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtsvg = qtprev.qtsvg.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-                qtimageformats = qtprev.qtimageformats.overrideAttrs (oldAttrs: {
-                  doCheck = false;
-                  doInstallCheck = false;
-                });
-              });
-              # Override other potentially slow packages with safe fallbacks
-              ffmpeg = prev.ffmpeg.overrideAttrs (oldAttrs: {
-                doCheck = false;
-                doInstallCheck = false;
-              });
-              cmake = prev.cmake.overrideAttrs (oldAttrs: {
-                doCheck = false;
-                doInstallCheck = false;
-              });
-              mesa = prev.mesa.overrideAttrs (oldAttrs: {
-                doCheck = false;
-                doInstallCheck = false;
-              });
-              gstreamer = prev.gstreamer.overrideAttrs (oldAttrs: {
-                doCheck = false;
-                doInstallCheck = false;
-              });
-              postgresql = prev.postgresql.overrideAttrs (oldAttrs: {
-                doCheck = false;
-                doInstallCheck = false;
-              });
-            })
-          ];
         };
 
+        # Separate package sets to avoid cache invalidation
         androidPkgs = android-nixpkgs.sdk.${system};
         
-        # Comprehensive Android SDK configuration for phone farm management
+        # Lazy-loaded Android SDK (only built when android shell is used)
         androidComposition = androidPkgs (sdkPkgs: with sdkPkgs; [
-          # Command line tools and build tools
           cmdline-tools-latest
           build-tools-35-0-0
           build-tools-34-0-0
-          build-tools-33-0-2
           platform-tools
-          
-          # Android platforms for compatibility testing
           platforms-android-35
           platforms-android-34
           platforms-android-33
-          platforms-android-30
-          
-          # Development tools
           emulator
           system-images-android-33-google-apis-x86-64
-          system-images-android-34-google-apis-x86-64
-          
-          # NDK for native development (if needed for extensions)
           ndk-27-2-12479018
         ]);
 
-        # Simplified Android SDK - use direct composition without custom wrappers
-        androidSdk = androidComposition;
+        # Core development tools - shared across all shells
+        coreTools = with pkgs; [
+          git
+          vim
+          tmux
+          jq
+          which
+          findutils
+          coreutils
+          bashInteractive
+          android-tools  # System ADB for QtScrcpy
+        ];
 
-        # Complete Qt6 package set for development
-        qt6Packages = with pkgs.qt6; [
+        # Build system essentials - minimal set
+        buildTools = with pkgs; [
+          cmake
+          ninja
+          pkg-config
+          gnumake
+          gcc13
+          makeWrapper
+        ];
+
+        # Qt6 packages - separated for lazy loading
+        qt6Full = with pkgs.qt6; [
           qtbase
           qtmultimedia
           qtnetworkauth
@@ -127,445 +75,293 @@
           qtimageformats
           qt5compat
           qtshadertools
+          wrapQtAppsHook
         ];
 
-        # Minimal build and development dependencies (QtWebEngine removed)
-        buildDeps = with pkgs; [
-          # Core build system
-          cmake
-          ninja
-          pkg-config
-          gnumake
-          
-          # Compilers and toolchain
-          gcc13
-          gdb
-          valgrind
-          clang-tools
-          
-          # Basic development tools (Qt Creator removed to avoid QtWebEngine)
-          # qtcreator  # Commented out - causes QtWebEngine timeout
-          
-          # Graphics and display libraries (comprehensive set)
+        # Graphics and system libraries for Qt development
+        qtSystemLibs = with pkgs; [
           mesa
           libGL
           libGLU
           xorg.libX11
           xorg.libXext
-          xorg.libXi
           xorg.libXrandr
-          xorg.libXcursor
-          xorg.libXinerama
-          xorg.libXxf86vm
-          xorg.libXfixes
-          xorg.libXdamage
-          xorg.libXcomposite
-          xorg.libXScrnSaver
-          libxcb
-          xorg.xcbutil
-          xorg.xcbutilwm
-          xorg.xcbutilimage
-          xorg.xcbutilkeysyms
-          xorg.xcbutilrenderutil
-          xorg.xcbutilcursor
           wayland
           wayland-protocols
-          wayland-scanner
-          
-          # Multimedia framework (complete GStreamer stack)
+          alsa-lib
+          pulseaudio
+          systemd
+          udev
+          openssl
+          zlib
+        ];
+
+        # Heavy multimedia stack - only loaded in full environment
+        multimediaStack = with pkgs; [
           ffmpeg_7
           gst_all_1.gstreamer
           gst_all_1.gst-plugins-base
           gst_all_1.gst-plugins-good
           gst_all_1.gst-plugins-bad
-          gst_all_1.gst-plugins-ugly
-          gst_all_1.gst-libav
           gst_all_1.gst-vaapi
-          alsa-lib
-          pulseaudio
           pipewire
-          
-          # Database stack for farm management (minimal set)
-          sqlite
-          # postgresql_16  # Can add later if needed
-          # redis          # Can add later if needed
-          # influxdb2      # Can add later if needed
-          
-          # Network and system libraries
-          openssl
-          curl
-          wget
-          libusb1
-          systemd
-          udev
-          zlib
-          bzip2
-          xz
-          
-          # Development and debugging tools
-          strace
-          ltrace
-          gdb
-          perf-tools
-          htop
-          lsof
-          
-          # Python for scripting and automation (minimal set)
-          python3
-          # python3Packages.pip         # Can add later if needed
-          # python3Packages.virtualenv  # Can add later if needed
-          # python3Packages.requests    # Can add later if needed
-          # python3Packages.flask       # Can add later if needed
-          # python3Packages.sqlalchemy  # Can add later if needed
-          
-          # Node.js for web interface development (can add later)
-          # nodejs_22  # Can add later if needed
-          # yarn       # Can add later if needed
-          
-          # Container and deployment tools (commented out for faster initial setup)
-          # docker
-          # docker-compose
-          # kubectl
-          
-          # Additional utilities
-          git
-          vim
-          tmux
-          screen
-          jq
-          yq
         ];
 
-        # Production-ready development shell
-        devShell = pkgs.mkShell {
-          name = "qtscrcpy-production-dev-shell";
+        # Development and debugging tools
+        devTools = with pkgs; [
+          gdb
+          valgrind
+          clang-tools
+          strace
+          htop
+          lsof
+        ];
+
+        # Common environment variables for all shells
+        commonEnvVars = ''
+          export QT_SELECT=6
+          export QT_QPA_PLATFORM_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins/platforms"
+          export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+          export QT_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins"
+          export CMAKE_PREFIX_PATH="${pkgs.qt6.qtbase}:${pkgs.qt6.qttools}:$CMAKE_PREFIX_PATH"
+          export MAKEFLAGS="-j$(nproc)"
+          export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
           
-          buildInputs = buildDeps ++ qt6Packages ++ [
-            androidSdk
-          ];
+          # Configure QtScrcpy to use system ADB instead of bundled binary
+          export QTSCRCPY_ADB_PATH="${pkgs.android-tools}/bin/adb"
+        '';
 
-          nativeBuildInputs = with pkgs; [
-            qt6.wrapQtAppsHook
-            makeWrapper
-            bashInteractive
-            which
-            findutils
-            coreutils
-          ];
+        # Graphics optimization settings
+        graphicsEnvVars = ''
+          export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
+          export __GLX_VENDOR_LIBRARY_NAME=mesa
+          export QT_OPENGL=desktop
+          export QT_QPA_PLATFORM=xcb
+          export QT_XCB_GL_INTEGRATION=xcb_glx
+          export MESA_GL_VERSION_OVERRIDE=3.3
+          export MESA_GLSL_VERSION_OVERRIDE=330
+          export LIBGL_ALWAYS_SOFTWARE=0
+        '';
 
-          # Comprehensive environment setup
+        # Load farm functions
+        farmFunctionsLoader = ''
+          # Load QtScrcpy farm management functions
+          if [ -f "scripts/farm-functions.sh" ]; then
+            echo "📦 Loading QtScrcpy farm management functions..."
+            source scripts/farm-functions.sh
+            echo "✅ Farm functions loaded"
+          else
+            echo "⚠️  Farm functions not found at scripts/farm-functions.sh"
+          fi
+        '';
+
+        # ADB symlink automation for development environments
+        adbSymlinkFixer = ''
+          # Function to ensure ADB symlink is correct
+          fix_adb_symlink() {
+            local output_dir="output/x64/RelWithDebInfo"
+            if [ -d "$output_dir" ]; then
+              if [ -f "$output_dir/adb" ] && [ ! -L "$output_dir/adb" ]; then
+                echo "🔧 Replacing bundled ADB with NixOS system ADB symlink..."
+                rm -f "$output_dir/adb"
+                ln -sf "${pkgs.android-tools}/bin/adb" "$output_dir/adb"
+                echo "✅ ADB symlink fixed: $output_dir/adb -> ${pkgs.android-tools}/bin/adb"
+              elif [ ! -f "$output_dir/adb" ]; then
+                echo "🔧 Creating ADB symlink for NixOS..."
+                ln -sf "${pkgs.android-tools}/bin/adb" "$output_dir/adb"
+                echo "✅ ADB symlink created: $output_dir/adb -> ${pkgs.android-tools}/bin/adb"
+              fi
+            fi
+          }
+          
+          # Auto-fix ADB on shell entry
+          fix_adb_symlink
+        '';
+
+        # === SHELL DEFINITIONS ===
+
+        # DEFAULT SHELL - Minimal, fast loading (< 5 seconds)
+        defaultShell = pkgs.mkShell {
+          name = "qtscrcpy-minimal";
+          buildInputs = coreTools ++ buildTools;
+          nativeBuildInputs = [ pkgs.bashInteractive ];
+          
           shellHook = ''
-            echo "🚀 QtScrcpy Production Development Environment"
-            echo "=============================================="
+            echo "⚡ QtScrcpy Minimal Development Environment"
+            echo "=========================================="
+            echo "Loading time: ~3-5 seconds"
+            echo ""
+            echo "🚀 Switch to specialized environments:"
+            echo "  echo 'qt' > .qtscrcpy-env && direnv reload      # Qt6 development"
+            echo "  echo 'android' > .qtscrcpy-env && direnv reload # Android tools"
+            echo "  echo 'full' > .qtscrcpy-env && direnv reload    # Complete environment"
+            echo ""
+            echo "⚡ Or use direct nix develop commands:"
+            echo "  nix develop .#qt      # Qt6 development shell"
+            echo "  nix develop .#android # Android tools shell"  
+            echo "  nix develop .#full    # Complete environment shell"
+            echo "=========================================="
+            ${commonEnvVars}
+            ${adbSymlinkFixer}
+            
+            # Initialize basic project structure
+            mkdir -p build/{debug,release,test} logs data/{db,cache,uploads}
+          '';
+        };
+
+        # QT SHELL - Qt6 development focused
+        qtShell = pkgs.mkShell {
+          name = "qtscrcpy-qt-dev";
+          buildInputs = coreTools ++ buildTools ++ qt6Full ++ qtSystemLibs;
+          nativeBuildInputs = [ pkgs.qt6.wrapQtAppsHook pkgs.makeWrapper ];
+          
+          shellHook = ''
+            echo "🎨 QtScrcpy Qt6 Development Environment"
+            echo "======================================"
             echo "Qt6 Version: $(qmake -version 2>/dev/null | grep -E 'Qt version' || echo 'Qt6 Available')"
             echo "CMake Version: $(cmake --version | head -n1)"
+            echo "======================================"
+            ${commonEnvVars}
+            ${graphicsEnvVars}
+            ${adbSymlinkFixer}
+            ${farmFunctionsLoader}
+            
+            init_dev_structure
+            
+            echo "📚 Qt Development commands available:"
+            echo "  source scripts/farm-functions.sh  # Load farm functions manually if needed"
+            echo "  build_debug                        # Build debug version"
+            echo "  build_release                      # Build release version"
+            echo "  clean_build                        # Clean build artifacts"
+            echo ""
+            echo "🔄 Switch environments:"
+            echo "  echo 'android' > .qtscrcpy-env && direnv reload  # Switch to Android tools"
+            echo "  echo 'full' > .qtscrcpy-env && direnv reload     # Switch to complete environment"
+            echo "  echo 'default' > .qtscrcpy-env && direnv reload  # Back to minimal"
+            echo ""
+            echo "🎯 Ready for Qt6 development!"
+          '';
+        };
+
+        # ANDROID SHELL - Android development tools
+        androidShell = pkgs.mkShell {
+          name = "qtscrcpy-android-dev";
+          buildInputs = coreTools ++ buildTools ++ [ androidComposition ];
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          
+          shellHook = ''
+            echo "📱 QtScrcpy Android Development Environment"
+            echo "=========================================="
             echo "Android SDK: ${androidComposition}/share/android-sdk"
             echo "NDK Version: $(ls ${androidComposition}/share/android-sdk/ndk/ 2>/dev/null || echo 'NDK Available')"
-            echo "=============================================="
+            echo "=========================================="
+            ${commonEnvVars}
+            ${adbSymlinkFixer}
             
             # Android development environment
             export ANDROID_HOME="${androidComposition}/share/android-sdk"
             export ANDROID_SDK_ROOT="${androidComposition}/share/android-sdk"
             export ANDROID_NDK_ROOT="${androidComposition}/share/android-sdk/ndk/27.2.12479018"
             export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
-            
-            # Add Android tools to PATH
             export PATH="${androidComposition}/bin:$PATH"
             
-            # Qt6 environment configuration
-            export QT_SELECT=6
-            export QT_QPA_PLATFORM_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins/platforms"
-            export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
-            export QT_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins"
+            ${farmFunctionsLoader}
+            init_dev_structure
+            init_adb
             
-            # CMake configuration for Qt6 development
-            export CMAKE_PREFIX_PATH="${pkgs.qt6.qtbase}:${pkgs.qt6.qttools}:$CMAKE_PREFIX_PATH"
-            export Qt6_DIR="${pkgs.qt6.qtbase}/lib/cmake/Qt6"
-            export Qt6Core_DIR="${pkgs.qt6.qtbase}/lib/cmake/Qt6Core"
-            export Qt6Widgets_DIR="${pkgs.qt6.qtbase}/lib/cmake/Qt6Widgets"
-            export Qt6Network_DIR="${pkgs.qt6.qtbase}/lib/cmake/Qt6Network"
-            export Qt6Multimedia_DIR="${pkgs.qt6.qtmultimedia}/lib/cmake/Qt6Multimedia"
-            export Qt6OpenGL_DIR="${pkgs.qt6.qtbase}/lib/cmake/Qt6OpenGL"
+            echo "📚 Android commands available:"
+            echo "  source scripts/farm-functions.sh  # Load farm functions manually if needed"
+            echo "  list_devices                       # List connected devices"
+            echo "  adb devices                        # ADB device list"
+            echo "  init_adb                           # Start ADB server"
+            echo ""
+            echo "🔄 Switch environments:"
+            echo "  echo 'qt' > .qtscrcpy-env && direnv reload       # Switch to Qt6 development"
+            echo "  echo 'full' > .qtscrcpy-env && direnv reload     # Switch to complete environment"
+            echo "  echo 'default' > .qtscrcpy-env && direnv reload  # Back to minimal"
+            echo ""
+            echo "🎯 Ready for Android development!"
+          '';
+        };
+
+        # FULL SHELL - Complete development environment (use sparingly)
+        fullShell = pkgs.mkShell {
+          name = "qtscrcpy-full-dev";
+          buildInputs = coreTools ++ buildTools ++ qt6Full ++ qtSystemLibs ++ 
+                       multimediaStack ++ devTools ++ [ androidComposition ];
+          nativeBuildInputs = [ pkgs.qt6.wrapQtAppsHook pkgs.makeWrapper ];
+          
+          shellHook = ''
+            echo "🚀 QtScrcpy Complete Development Environment"
+            echo "============================================"
+            echo "⚠️  Full environment - longer load time (~30-60 seconds)"
+            echo "Qt6 Version: $(qmake -version 2>/dev/null | grep -E 'Qt version' || echo 'Qt6 Available')"
+            echo "CMake Version: $(cmake --version | head -n1)"
+            echo "Android SDK: ${androidComposition}/share/android-sdk"
+            echo "============================================"
+            ${commonEnvVars}
+            ${graphicsEnvVars}
+            ${adbSymlinkFixer}
             
-            # Graphics and rendering - Desktop OpenGL configuration
-            export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
-            export LIBVA_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
-            export __GLX_VENDOR_LIBRARY_NAME=mesa
-            # Force desktop OpenGL instead of OpenGL ES to fix shader precision issues
-            export QT_OPENGL=desktop
-            export QT_QPA_PLATFORM=xcb
-            export QT_XCB_GL_INTEGRATION=xcb_glx
-            # Mesa configuration for software/hardware rendering
-            export MESA_GL_VERSION_OVERRIDE=3.3
-            export MESA_GLSL_VERSION_OVERRIDE=330
-            # Allow software rendering fallback but prefer hardware when available
-            export LIBGL_ALWAYS_SOFTWARE=0
-            export MESA_LOADER_DRIVER_OVERRIDE=swrast
+            # Android environment
+            export ANDROID_HOME="${androidComposition}/share/android-sdk"
+            export ANDROID_SDK_ROOT="${androidComposition}/share/android-sdk"
+            export ANDROID_NDK_ROOT="${androidComposition}/share/android-sdk/ndk/27.2.12479018"
+            export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+            export PATH="${androidComposition}/bin:$PATH"
             
-            # Development environment
-            export PKG_CONFIG_PATH="${pkgs.qt6.qtbase}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.sqlite.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+            # Development environment optimization
+            export PKG_CONFIG_PATH="${pkgs.qt6.qtbase}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
             export CPATH="${pkgs.qt6.qtbase}/include:$CPATH"
             export LIBRARY_PATH="${pkgs.qt6.qtbase}/lib:$LIBRARY_PATH"
             export LD_LIBRARY_PATH="${pkgs.qt6.qtbase}/lib:${pkgs.mesa}/lib:$LD_LIBRARY_PATH"
             
-            # Database configuration for development
-            export PGHOST=localhost
-            export PGPORT=5432
-            export REDIS_URL=redis://localhost:6379
+            ${farmFunctionsLoader}
+            init_dev_structure
+            init_adb
             
-            # Build optimization
-            export MAKEFLAGS="-j$(nproc)"
-            export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
-            
-            # Create development structure
-            if [ ! -d "build" ]; then
-              echo "📁 Creating build directory structure..."
-              mkdir -p build/{debug,release,test}
-            fi
-            
-            if [ ! -d "logs" ]; then
-              mkdir -p logs
-            fi
-            
-            if [ ! -d "data" ]; then
-              mkdir -p data/{db,cache,uploads}
-            fi
-            
-            # ADB server setup
-            if command -v adb >/dev/null 2>&1; then
-              echo "🔧 Starting ADB server..."
-              adb start-server 2>/dev/null || true
-            fi
-            
-            # Development convenience functions
-            build_debug() {
-              cd build/debug
-              cmake ../.. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-              make -j$(nproc)
-              cd ../..
-            }
-            
-            build_release() {
-              cd build/release  
-              cmake ../.. -DCMAKE_BUILD_TYPE=Release
-              make -j$(nproc)
-              cd ../..
-            }
-            
-            clean_build() {
-              rm -rf build/*
-              echo "🧹 Build directories cleaned"
-            }
-            
-            run_qtscrcpy() {
-              echo "🚀 Starting QtScrcpy with optimized graphics settings..."
-              echo "📱 Connected devices:"
-              adb devices
-              echo "🎮 Launching QtScrcpy GUI with desktop OpenGL..."
-              # Force desktop OpenGL to fix shader precision issues
-              QT_OPENGL=desktop \
-              QT_XCB_GL_INTEGRATION=xcb_glx \
-              MESA_GL_VERSION_OVERRIDE=3.3 \
-              MESA_GLSL_VERSION_OVERRIDE=330 \
-              ./output/x64/RelWithDebInfo/QtScrcpy "$@"
-            }
-            
-            run_qtscrcpy_device() {
-              local device_ip="$1"
-              if [ -z "$device_ip" ]; then
-                echo "❌ Usage: run_qtscrcpy_device <device_ip:port>"
-                echo "📋 Example: run_qtscrcpy_device 192.168.40.101:5555"
-                return 1
-              fi
-              echo "🚀 Starting QtScrcpy for device: $device_ip with desktop OpenGL..."
-              # Force desktop OpenGL to fix shader precision issues
-              QT_OPENGL=desktop \
-              QT_XCB_GL_INTEGRATION=xcb_glx \
-              MESA_GL_VERSION_OVERRIDE=3.3 \
-              MESA_GLSL_VERSION_OVERRIDE=330 \
-              ./output/x64/RelWithDebInfo/QtScrcpy -s "$device_ip" --window-title "Phone Farm - $device_ip"
-            }
-            
-            kill_qtscrcpy() {
-              echo "🛑 Killing all QtScrcpy processes..."
-              pkill -f QtScrcpy || echo "✅ No QtScrcpy processes running"
-            }
-            
-            list_devices() {
-              echo "📱 Scanning for connected Android devices..."
-              adb devices -l
-            }
-            
-            run_qtscrcpy_farm() {
-              echo "🏭 Starting QtScrcpy Phone Farm - Multi-Device Mode"
-              echo "📱 Detecting connected devices..."
-              
-              # Get list of connected devices
-              local devices=($(adb devices | grep -E '\tdevice$' | cut -f1))
-              local device_count=$${#devices[@]}
-              
-              if [ $device_count -eq 0 ]; then
-                echo "❌ No devices detected. Please ensure devices are connected and authorized."
-                echo "💡 Try: adb devices"
-                return 1
-              fi
-              
-              echo "✅ Found $$device_count device(s)"
-              
-              # Kill any existing instances
-              kill_qtscrcpy
-              sleep 2
-              
-              # Launch QtScrcpy for each device with proper positioning
-              local x_pos=0
-              local y_pos=0
-              local window_width=350
-              local window_height=400
-              local columns=4  # Arrange in 4 columns
-              
-              for i in "$${!devices[@]}"; do
-                local device="$${devices[$i]}"
-                local device_num=$((i + 1))
-                local title="Farm Device $$device_num - $$device"
-                
-                # Calculate window position (grid layout)
-                local col=$$((i % columns))
-                local row=$$((i / columns))
-                x_pos=$$((col * window_width))
-                y_pos=$$((row * window_height))
-                
-                echo "🚀 Launching Device $$device_num: $$device at position ($$x_pos, $$y_pos)"
-                
-                # Launch with desktop OpenGL and positioning
-                QT_OPENGL=desktop \
-                QT_XCB_GL_INTEGRATION=xcb_glx \
-                MESA_GL_VERSION_OVERRIDE=3.3 \
-                MESA_GLSL_VERSION_OVERRIDE=330 \
-                ./output/x64/RelWithDebInfo/QtScrcpy \
-                  -s "$$device" \
-                  --window-title "$$title" \
-                  --window-x "$$x_pos" \
-                  --window-y "$$y_pos" \
-                  --max-size 800 \
-                  --bit-rate 4M \
-                  --max-fps 30 \
-                  --stay-awake &
-                
-                # Small delay to prevent resource conflicts
-                sleep 1.5
-              done
-              
-              echo "🎯 Farm Mode: Launched $$device_count devices in grid layout"
-              echo "💡 Use 'kill_qtscrcpy' to stop all devices"
-            }
-            
-            run_qtscrcpy_custom() {
-              local device_list="$1"
-              if [ -z "$device_list" ]; then
-                echo "❌ Usage: run_qtscrcpy_custom \"device1:port device2:port device3:port\""
-                echo "📋 Example: run_qtscrcpy_custom \"192.168.40.101:5555 192.168.40.102:5555\""
-                return 1
-              fi
-              
-              echo "🏭 Starting Custom Multi-Device Configuration"
-              
-              # Kill any existing instances
-              kill_qtscrcpy
-              sleep 2
-              
-              # Convert device list to array
-              local devices=($device_list)
-              local device_count=$${#devices[@]}
-              
-              echo "✅ Launching $$device_count custom devices"
-              
-              # Launch each device with custom positioning
-              local x_pos=0
-              local y_pos=0
-              local window_width=350
-              local window_height=400
-              
-              for i in "$${!devices[@]}"; do
-                local device="$${devices[$i]}"
-                local device_num=$((i + 1))
-                local title="Custom Device $$device_num - $$device"
-                
-                # Calculate window position
-                local col=$$((i % 3))  # 3 columns for custom mode
-                local row=$$((i / 3))
-                x_pos=$$((col * window_width))
-                y_pos=$$((row * window_height))
-                
-                echo "🚀 Launching Custom Device $$device_num: $$device"
-                
-                QT_OPENGL=desktop \
-                QT_XCB_GL_INTEGRATION=xcb_glx \
-                MESA_GL_VERSION_OVERRIDE=3.3 \
-                MESA_GLSL_VERSION_OVERRIDE=330 \
-                ./output/x64/RelWithDebInfo/QtScrcpy \
-                  -s "$$device" \
-                  --window-title "$$title" \
-                  --window-x "$$x_pos" \
-                  --window-y "$$y_pos" \
-                  --max-size 1080 \
-                  --bit-rate 6M \
-                  --max-fps 60 \
-                  --stay-awake &
-                
-                sleep 1.5
-              done
-              
-              echo "🎯 Custom Mode: Launched $$device_count devices"
-            }
-            
-            # Export functions for use in shell
-            export -f build_debug build_release clean_build run_qtscrcpy run_qtscrcpy_device kill_qtscrcpy list_devices run_qtscrcpy_farm run_qtscrcpy_custom
-            
-            echo "📚 Development commands available:"
-            echo "  build_debug         - Build debug version"
-            echo "  build_release       - Build release version" 
-            echo "  clean_build         - Clean all build artifacts"
+            echo "📚 Complete command set available:"
+            echo "  source scripts/farm-functions.sh  # Load farm functions manually if needed"
+            echo ""
+            echo "🔨 Build commands:"
+            echo "  build_debug, build_release, clean_build"
             echo ""
             echo "🚀 QtScrcpy execution commands:"
-            echo "  run_qtscrcpy                    - Launch QtScrcpy GUI (auto-detects devices)"
-            echo "  run_qtscrcpy_device <ip:port>   - Connect to specific device"
-            echo "  run_qtscrcpy_farm              - Launch ALL connected devices automatically (FARM MODE)"
-            echo "  run_qtscrcpy_custom \"dev1 dev2\" - Launch specific list of devices"
-            echo "  kill_qtscrcpy                   - Stop all QtScrcpy processes"
-            echo "  list_devices                    - List connected Android devices"
+            echo "  run_qtscrcpy, run_qtscrcpy_device, run_qtscrcpy_farm"
             echo ""
-            echo "🏭 Multi-Device Farm Examples:"
-            echo "  list_devices                                    # See connected devices"
-            echo "  run_qtscrcpy_farm                              # Launch ALL devices in grid"
-            echo "  run_qtscrcpy_custom \"192.168.40.101:5555 192.168.40.102:5555\"  # Specific devices"
-            echo "  run_qtscrcpy_device 192.168.40.101:5555       # Single device"
+            echo "📱 Device management:"
+            echo "  list_devices, kill_qtscrcpy"
             echo ""
-            echo "🎯 Ready for QtScrcpy phone farm development!"
+            echo "🏭 Phone farm commands:"
+            echo "  run_qtscrcpy_farm, run_qtscrcpy_custom"
+            echo ""
+            echo "🔄 Switch environments:"
+            echo "  echo 'qt' > .qtscrcpy-env && direnv reload       # Switch to Qt6 only"
+            echo "  echo 'android' > .qtscrcpy-env && direnv reload  # Switch to Android only"
+            echo "  echo 'default' > .qtscrcpy-env && direnv reload  # Back to minimal"
+            echo ""
+            echo "🎯 Ready for complete QtScrcpy development!"
           '';
         };
 
       in {
-        # Development shell
-        devShells.default = devShell;
+        # === DEVELOPMENT SHELLS ===
+        devShells = {
+          default = defaultShell;  # Fast minimal shell
+          qt = qtShell;           # Qt6 development
+          android = androidShell; # Android tools
+          full = fullShell;       # Complete environment
+        };
         
-        # Production package build
+        # Production package build (optimized, no tests)
         packages.qtscrcpy = pkgs.stdenv.mkDerivation rec {
           pname = "qtscrcpy";
           version = "2.3.0";
           
           src = ./.;
           
-          nativeBuildInputs = with pkgs; [
-            cmake
-            ninja
-            pkg-config
-            qt6.wrapQtAppsHook
-            makeWrapper
-          ];
-          
-          buildInputs = qt6Packages ++ [
-            androidSdk
-          ] ++ buildDeps;
+          nativeBuildInputs = buildTools ++ [ pkgs.qt6.wrapQtAppsHook pkgs.makeWrapper ];
+          buildInputs = qt6Full ++ qtSystemLibs ++ [ androidComposition ];
           
           cmakeFlags = [
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
@@ -574,26 +370,30 @@
             "-DCMAKE_INSTALL_PREFIX=${placeholder "out"}"
           ];
           
-          # Disable tests explicitly
           doCheck = false;
           doInstallCheck = false;
           
-          # Handle Qt application wrapping and library paths
           postInstall = ''
-            # Ensure binary exists before wrapping
             if [ -f $out/bin/QtScrcpy ]; then
               wrapProgram $out/bin/QtScrcpy \
                 --set QT_QPA_PLATFORM_PLUGIN_PATH "${pkgs.qt6.qtbase}/lib/qt-6/plugins/platforms" \
                 --set QML2_IMPORT_PATH "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml" \
                 --set QT_PLUGIN_PATH "${pkgs.qt6.qtbase}/lib/qt-6/plugins" \
-                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath (qt6Packages ++ buildDeps)}" \
+                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath (qt6Full ++ qtSystemLibs)}" \
                 --set ANDROID_HOME "${androidComposition}/share/android-sdk" \
-                --set ANDROID_SDK_ROOT "${androidComposition}/share/android-sdk"
+                --set ANDROID_SDK_ROOT "${androidComposition}/share/android-sdk" \
+                --set QTSCRCPY_ADB_PATH "${pkgs.android-tools}/bin/adb"
+                
+              # Replace bundled ADB with symlink to NixOS system ADB
+              if [ -f $out/bin/adb ]; then
+                rm -f $out/bin/adb
+                ln -sf "${pkgs.android-tools}/bin/adb" $out/bin/adb
+              fi
             fi
           '';
           
           meta = with pkgs.lib; {
-            description = "Qt-based Android device mirroring and farm management system";
+            description = "Enterprise Qt-based Android device mirroring and farm management";
             homepage = "https://github.com/barry-ran/QtScrcpy";
             license = licenses.asl20;
             platforms = platforms.linux;
@@ -601,152 +401,56 @@
           };
         };
         
-        # Set default package
         packages.default = self.packages.${system}.qtscrcpy;
 
-        # Comprehensive NixOS module for production deployment
+        # Lightweight NixOS module (removed heavy services)
         nixosModules.qtscrcpy = { config, lib, pkgs, ... }:
           with lib;
           let
             cfg = config.services.qtscrcpy;
           in {
             options.services.qtscrcpy = {
-              enable = mkEnableOption "QtScrcpy phone farm management service";
-              
+              enable = mkEnableOption "QtScrcpy phone farm service";
               package = mkOption {
                 type = types.package;
                 default = self.packages.${pkgs.system}.qtscrcpy;
                 description = "QtScrcpy package to use";
               };
-              
               user = mkOption {
                 type = types.str;
                 default = "qtscrcpy";
                 description = "User to run QtScrcpy service";
               };
-              
-              group = mkOption {
-                type = types.str;
-                default = "qtscrcpy";
-                description = "Group to run QtScrcpy service";
-              };
-              
               dataDir = mkOption {
                 type = types.path;
                 default = "/var/lib/qtscrcpy";
                 description = "Data directory for QtScrcpy";
               };
-              
               port = mkOption {
                 type = types.int;
                 default = 27183;
-                description = "Port for QtScrcpy device communication";
-              };
-              
-              webPort = mkOption {
-                type = types.int;
-                default = 8080;
-                description = "Port for web interface (when implemented)";
+                description = "Port for QtScrcpy communication";
               };
             };
             
             config = mkIf cfg.enable {
-              # User and group configuration
               users.users.${cfg.user} = {
                 isSystemUser = true;
-                group = cfg.group;
+                group = cfg.user;
                 home = cfg.dataDir;
                 createHome = true;
-                extraGroups = [ "adbusers" "video" "audio" "plugdev" ];
+                extraGroups = [ "adbusers" "video" "audio" ];
               };
               
-              users.groups.${cfg.group} = {};
+              users.groups.${cfg.user} = {};
               users.groups.adbusers = {};
               
-              # Enable required programs
               programs.adb.enable = true;
               
-              # SystemD service configuration
-              systemd.services.qtscrcpy = {
-                description = "QtScrcpy Phone Farm Management Service";
-                wantedBy = [ "multi-user.target" ];
-                after = [ "network.target" "postgresql.service" "redis.service" ];
-                wants = [ "postgresql.service" "redis.service" ];
-                
-                serviceConfig = {
-                  Type = "simple";
-                  User = cfg.user;
-                  Group = cfg.group;
-                  WorkingDirectory = cfg.dataDir;
-                  ExecStart = "${cfg.package}/bin/QtScrcpy --headless --port ${toString cfg.port}";
-                  ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
-                  Restart = "always";
-                  RestartSec = "10";
-                  
-                  # Security hardening
-                  NoNewPrivileges = true;
-                  ProtectSystem = "strict";
-                  ProtectHome = true;
-                  ReadWritePaths = [ cfg.dataDir "/tmp" ];
-                  PrivateTmp = true;
-                  PrivateDevices = false; # Need access to USB devices
-                  DeviceAllow = [
-                    "/dev/bus/usb rw"
-                    "char-usb_device rw"
-                  ];
-                  
-                  # Resource limits
-                  MemoryMax = "4G";
-                  CPUQuota = "200%";
-                };
-                
-                environment = {
-                  ANDROID_HOME = "${androidComposition}/share/android-sdk";
-                  ANDROID_SDK_ROOT = "${androidComposition}/share/android-sdk";
-                  QT_QPA_PLATFORM = "offscreen";
-                  DISPLAY = "";
-                };
-              };
-              
-              # Firewall configuration
-              networking.firewall = {
-                allowedTCPPorts = [ cfg.port cfg.webPort ];
-                allowedTCPPortRanges = [
-                  { from = 27183; to = 27283; } # Device communication range
-                ];
-              };
-              
-              # Database services (optional, can be disabled if external)
-              services.postgresql = {
-                enable = mkDefault true;
-                package = pkgs.postgresql_16;
-                ensureDatabases = [ "qtscrcpy" ];
-                ensureUsers = [{
-                  name = cfg.user;
-                  ensureDBOwnership = true;
-                }];
-              };
-              
-              services.redis = {
-                enable = mkDefault true;
-                servers.qtscrcpy = {
-                  enable = true;
-                  port = 6379;
-                };
-              };
-              
-              # udev rules for Android devices
               services.udev.extraRules = ''
-                # Android Debug Bridge
                 SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="adbusers"
-                # Samsung
                 SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0666", GROUP="adbusers"
-                # Google
-                SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="adbusers"
-                # Xiaomi
                 SUBSYSTEM=="usb", ATTR{idVendor}=="2717", MODE="0666", GROUP="adbusers"
-                # OnePlus
-                SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0666", GROUP="adbusers"
               '';
             };
           };

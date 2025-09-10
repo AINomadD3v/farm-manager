@@ -14,6 +14,8 @@
 #include "../QtScrcpyCore/include/QtScrcpyCore.h"
 #include "audio/audiooutput.h"
 
+class FarmViewer;
+
 namespace Ui
 {
     class Widget;
@@ -66,6 +68,8 @@ private slots:
     void on_installSndcpyBtn_clicked();
 
     void on_autoUpdatecheckBox_toggled(bool checked);
+
+    void on_farmViewBtn_clicked();
 
     void showIpEditMenu(const QPoint &pos);
 

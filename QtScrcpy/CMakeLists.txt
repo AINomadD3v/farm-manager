@@ -179,6 +179,8 @@ set(QC_UI_SOURCES
     ui/dialog.cpp
     ui/dialog.h
     ui/dialog.ui
+    ui/farmviewer.h
+    ui/farmviewer.cpp
     render/qyuvopenglwidget.h
     render/qyuvopenglwidget.cpp
 )
