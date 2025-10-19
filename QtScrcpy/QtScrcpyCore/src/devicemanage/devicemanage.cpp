@@ -32,6 +32,11 @@ QPointer<IDevice> DeviceManage::getDevice(const QString &serial)
     return m_devices[serial];
 }
 
+QStringList DeviceManage::getAllConnectedSerials() const
+{
+    return m_devices.keys();
+}
+
 bool DeviceManage::connectDevice(qsc::DeviceParams params)
 {
     if (params.serial.trimmed().isEmpty()) {
@@ -61,11 +66,16 @@ bool DeviceManage::connectDevice(qsc::DeviceParams params)
     IDevice *device = new Device(params);
     connect(device, &Device::deviceConnected, this, &DeviceManage::onDeviceConnected);
     connect(device, &Device::deviceDisconnected, this, &DeviceManage::onDeviceDisconnected);
+
+    // Add device to map BEFORE connecting to make it available for signal handlers
+    m_devices[params.serial] = device;
+
     if (!device->connectDevice()) {
+        // Connection failed, remove from map and clean up
+        m_devices.remove(params.serial);
         delete device;
         return false;
     }
-    m_devices[params.serial] = device;
     return true;
 }
 

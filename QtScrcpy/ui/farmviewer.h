@@ -11,14 +11,16 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
+#include <QSocketNotifier>
+#include <QResizeEvent>
+#include <QProgressBar>
+#include <QTimer>
 #include "adbprocess.h"
+#include "deviceconnectiontask.h"
+#include "performancemonitor.h"
+#include "../QtScrcpyCore/src/device/deviceconnectionpool.h"
 
 class VideoForm;
-
-namespace Ui
-{
-    class FarmViewer;
-}
 
 class FarmViewer : public QWidget
 {
@@ -27,6 +29,9 @@ class FarmViewer : public QWidget
 public:
     static FarmViewer& instance();
     ~FarmViewer();
+
+    // Public access to singleton instance pointer (for safe checks before instance())
+    static FarmViewer* s_instance;
 
     void addDevice(const QString& serial, const QString& deviceName, const QSize& size);
     void removeDevice(const QString& serial);
@@ -37,12 +42,36 @@ public:
     bool isVisible() const;
     bool isManagingDevice(const QString& serial) const;
 
+    // Dynamic grid and quality management
+    void calculateOptimalGrid(int deviceCount, const QSize& windowSize);
+    qsc::StreamQualityProfile getOptimalStreamSettings(int totalDeviceCount);
+    void applyQualityToAllDevices();
+    void updateDeviceQuality(const QString& serial, const qsc::StreamQualityProfile& profile);
+
     static const QString &getServerPath();
+
+    // Signal handling setup (must be called from main before event loop)
+    static void setupUnixSignalHandlers();
 
 private slots:
     void onScreenshotAllClicked();
     void onSyncActionClicked();
     void onGridSizeChanged();
+
+    // Connection management slots
+    void onConnectionBatchStarted(int totalDevices);
+    void onConnectionBatchProgress(int completed, int total, int failed);
+    void onConnectionBatchCompleted(int successful, int failed);
+
+    // Unix signal handler slot (called via socket notifier)
+    void handleUnixSignal();
+
+    // Resource monitoring slots
+    void onResourceCheckTimer();
+    void onConnectionThrottleTimer();
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     explicit FarmViewer(QWidget *parent = nullptr);
@@ -53,31 +82,64 @@ private:
     QWidget* createDeviceWidget(const QString& serial, const QString& deviceName);
     void connectToDevice(const QString& serial);
     void processDetectedDevices(const QStringList& devices);
+    void processConnectionQueue();
+    void onConnectionComplete(const QString& serial, bool success);
 
-    Ui::FarmViewer *ui;
+    // Helper methods for grid calculation
+    QSize getOptimalTileSize(int deviceCount, const QSize& windowSize) const;
+    int calculateColumns(int deviceCount, const QSize& windowSize) const;
+
+    // Resource management helpers
+    bool checkMemoryAvailable();
+    void logResourceUsage(const QString& context);
+    int calculateConnectionDelay(int queueSize);
+    int getMaxParallelForDeviceCount(int totalDeviceCount);
+
+    // Cleanup and shutdown
+    void cleanupAndExit();
+
+    // Unix signal handlers (async-signal-safe)
+    static void unixSignalHandler(int signalNumber);
+    static void setupSocketPair();
+
     QScrollArea* m_scrollArea;
     QWidget* m_gridWidget;
     QGridLayout* m_gridLayout;
     QVBoxLayout* m_mainLayout;
     QHBoxLayout* m_toolbarLayout;
-    
+
     // Device management
     QMap<QString, QPointer<VideoForm>> m_deviceForms;
     QMap<QString, QPointer<QWidget>> m_deviceContainers;
-    
-    // Grid configuration
+
+    // SIMPLIFIED: No connection queue or resource management in display-only mode
+    QTimer* m_connectionThrottleTimer;  // Kept for compatibility (unused)
+    QTimer* m_resourceCheckTimer;  // Kept for compatibility (unused)
+
+    // Grid configuration - dynamically calculated
     int m_gridRows;
     int m_gridCols;
-    
+    qsc::StreamQualityProfile m_currentQualityProfile;
+    qsc::DeviceConnectionPool::QualityTier m_currentQualityTier;
+
     // Controls
     QPushButton* m_screenshotAllBtn;
     QPushButton* m_syncActionBtn;
     QLabel* m_statusLabel;
-    
+    QProgressBar* m_connectionProgressBar;
+
     // Device detection
     qsc::AdbProcess m_deviceDetectionAdb;
-    
-    static FarmViewer* s_instance;
+
+    // Connection state
+    bool m_isConnecting;
+
+    // Unix signal handling using socketpair pattern
+    // This is the ONLY async-signal-safe way to handle signals in Qt
+    // Signals write to signalFd[0], QSocketNotifier reads from signalFd[1]
+    static int s_signalFd[2];
+    QSocketNotifier* m_signalNotifier;
+    bool m_isShuttingDown;
 };
 
 #endif // FARMVIEWER_H

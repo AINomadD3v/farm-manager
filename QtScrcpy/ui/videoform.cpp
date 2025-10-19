@@ -78,9 +78,126 @@ void VideoForm::initUI()
     m_fpsLabel->setMinimumWidth(100);
     m_fpsLabel->setStyleSheet(R"(QLabel {color: #00FF00;})");
 
+    // Create placeholder widget for when no video is streaming
+    // Make it a child of the video widget so it overlays properly
+    m_placeholderWidget = new QWidget(m_videoWidget);
+    m_placeholderWidget->setStyleSheet(R"(
+        QWidget#placeholderWidget {
+            background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #2d3436, stop:1 #636e72);
+            border: 2px solid #74b9ff;
+            border-radius: 8px;
+        }
+    )");
+    m_placeholderWidget->setObjectName("placeholderWidget");
+
+    // Layout for placeholder
+    QVBoxLayout* placeholderLayout = new QVBoxLayout(m_placeholderWidget);
+    placeholderLayout->setContentsMargins(10, 10, 10, 10);
+    placeholderLayout->setSpacing(10);
+
+    // Add spacer to center content
+    placeholderLayout->addStretch(1);
+
+    // Phone icon placeholder (using text icon since emoji might not render well)
+    QLabel* iconLabel = new QLabel();
+    iconLabel->setText("📱");  // Phone emoji
+    iconLabel->setAlignment(Qt::AlignCenter);
+    QFont iconFont;
+    iconFont.setPointSize(48);
+    iconLabel->setFont(iconFont);
+    iconLabel->setStyleSheet("QLabel { background: transparent; border: none; }");
+    placeholderLayout->addWidget(iconLabel);
+
+    // Serial number label
+    m_placeholderSerialLabel = new QLabel("Device");
+    m_placeholderSerialLabel->setAlignment(Qt::AlignCenter);
+    m_placeholderSerialLabel->setWordWrap(true);
+    QFont serialFont;
+    serialFont.setPointSize(11);
+    serialFont.setBold(true);
+    m_placeholderSerialLabel->setFont(serialFont);
+    m_placeholderSerialLabel->setStyleSheet("QLabel { color: #dfe6e9; background: transparent; border: none; padding: 5px; }");
+    placeholderLayout->addWidget(m_placeholderSerialLabel);
+
+    // Status label
+    m_placeholderStatusLabel = new QLabel("Ready to Connect");
+    m_placeholderStatusLabel->setAlignment(Qt::AlignCenter);
+    QFont statusFont;
+    statusFont.setPointSize(9);
+    m_placeholderStatusLabel->setFont(statusFont);
+    m_placeholderStatusLabel->setStyleSheet("QLabel { color: #74b9ff; background: transparent; border: none; }");
+    placeholderLayout->addWidget(m_placeholderStatusLabel);
+
+    // Add spacer to center content
+    placeholderLayout->addStretch(1);
+
+    // Show video widget (with placeholder) by default
+    m_videoWidget->show();
+    m_placeholderWidget->show();
+    m_placeholderWidget->raise(); // Ensure it's on top
+
+    // Size placeholder to fill video widget
+    m_placeholderWidget->setGeometry(m_videoWidget->rect());
+
+    // Install event filter to track video widget resizes
+    m_videoWidget->installEventFilter(this);
+
     setMouseTracking(true);
     m_videoWidget->setMouseTracking(true);
     ui->keepRatioWidget->setMouseTracking(true);
+}
+
+bool VideoForm::eventFilter(QObject *watched, QEvent *event)
+{
+    // Update placeholder size when video widget is resized
+    if (watched == m_videoWidget && event->type() == QEvent::Resize && m_placeholderWidget) {
+        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+
+        // Adjust font sizes based on widget size
+        int width = m_videoWidget->width();
+        int height = m_videoWidget->height();
+
+        if (m_placeholderSerialLabel && m_placeholderStatusLabel) {
+            // Scale font sizes for small tiles
+            int serialFontSize = 11;
+            int statusFontSize = 9;
+            int iconSize = 48;
+
+            if (width < 150 || height < 250) {
+                // Very small tiles (100+ devices)
+                serialFontSize = 8;
+                statusFontSize = 7;
+                iconSize = 24;
+            } else if (width < 220 || height < 350) {
+                // Small tiles (50-100 devices)
+                serialFontSize = 9;
+                statusFontSize = 8;
+                iconSize = 32;
+            }
+
+            // Update fonts
+            QFont serialFont = m_placeholderSerialLabel->font();
+            serialFont.setPointSize(serialFontSize);
+            m_placeholderSerialLabel->setFont(serialFont);
+
+            QFont statusFont = m_placeholderStatusLabel->font();
+            statusFont.setPointSize(statusFontSize);
+            m_placeholderStatusLabel->setFont(statusFont);
+
+            // Update icon size (find the icon label)
+            QList<QLabel*> labels = m_placeholderWidget->findChildren<QLabel*>();
+            for (QLabel* label : labels) {
+                if (label->text().contains("📱")) {
+                    QFont iconFont = label->font();
+                    iconFont.setPointSize(iconSize);
+                    label->setFont(iconFont);
+                    break;
+                }
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 QRect VideoForm::getGrabCursorRect()
@@ -154,6 +271,16 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
             m_loadingWidget->close();
         }
         m_videoWidget->show();
+
+        // Hide placeholder when video starts
+        if (m_placeholderWidget) {
+            m_placeholderWidget->hide();
+        }
+
+        // Update placeholder status
+        if (m_placeholderStatusLabel) {
+            m_placeholderStatusLabel->setText("Streaming");
+        }
     }
 
     updateShowSize(QSize(width, height));
@@ -164,6 +291,11 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
 void VideoForm::setSerial(const QString &serial)
 {
     m_serial = serial;
+
+    // Update placeholder with serial number
+    if (m_placeholderSerialLabel) {
+        m_placeholderSerialLabel->setText(serial);
+    }
 }
 
 void VideoForm::showToolForm(bool show)
@@ -763,6 +895,11 @@ void VideoForm::showEvent(QShowEvent *event)
             showToolForm(this->show_toolbar);
         });
     }
+
+    // Update placeholder size when showing
+    if (m_placeholderWidget && m_videoWidget) {
+        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+    }
 }
 
 void VideoForm::resizeEvent(QResizeEvent *event)
@@ -788,6 +925,11 @@ void VideoForm::resizeEvent(QResizeEvent *event)
         } else {
             setMinimumWidth(0);
         }
+    }
+
+    // Update placeholder widget size to match video widget
+    if (m_placeholderWidget && m_videoWidget) {
+        m_placeholderWidget->setGeometry(m_videoWidget->rect());
     }
 }
 

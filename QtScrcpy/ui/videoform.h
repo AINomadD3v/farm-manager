@@ -68,6 +68,8 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
 
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     // ui
     Ui::videoForm *ui;
@@ -75,6 +77,9 @@ private:
     QPointer<QWidget> m_loadingWidget;
     QPointer<QYUVOpenGLWidget> m_videoWidget;
     QPointer<QLabel> m_fpsLabel;
+    QPointer<QWidget> m_placeholderWidget;
+    QPointer<QLabel> m_placeholderSerialLabel;
+    QPointer<QLabel> m_placeholderStatusLabel;
 
     //inside member
     QSize m_frameSize;

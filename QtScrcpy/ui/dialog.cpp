@@ -496,18 +496,14 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
     }
     
     // Check if farm mode is active to prevent dual VideoForm creation
-    bool farmModeActive = FarmViewer::instance().isVisible();
+    // IMPORTANT: Only call instance() if singleton already exists to avoid crash
+    bool farmModeActive = (FarmViewer::s_instance != nullptr) && FarmViewer::instance().isVisible();
     qDebug() << "Dialog::onDeviceConnected - Farm mode active:" << farmModeActive;
-    
+
     if (farmModeActive) {
-        // Farm mode: Only add to FarmViewer, skip standalone VideoForm creation
-        qDebug() << "Dialog::onDeviceConnected - Farm mode: Adding device to FarmViewer only:" << serial;
-        QString deviceDisplayName = Config::getInstance().getNickName(serial);
-        if (deviceDisplayName.isEmpty()) {
-            deviceDisplayName = deviceName.isEmpty() ? serial : deviceName;
-        }
-        FarmViewer::instance().addDevice(serial, deviceDisplayName, size);
-        GroupController::instance().addDevice(serial);
+        // Farm mode: FarmViewer handles device addition via its own signal connection
+        // DO NOT call addDevice here to avoid race conditions and duplicate calls
+        qDebug() << "Dialog::onDeviceConnected - Farm mode active, FarmViewer will handle device:" << serial;
         return;
     }
     
@@ -558,15 +554,21 @@ void Dialog::onDeviceConnected(bool success, const QString &serial, const QStrin
 void Dialog::on_farmViewBtn_clicked()
 {
     qDebug() << "Dialog::on_farmViewBtn_clicked - Opening Farm Viewer";
-    FarmViewer::instance().showFarmViewer();
+    qDebug() << "Dialog::on_farmViewBtn_clicked - Getting FarmViewer instance...";
+    FarmViewer& viewer = FarmViewer::instance();
+    qDebug() << "Dialog::on_farmViewBtn_clicked - Instance obtained, calling showFarmViewer()...";
+    viewer.showFarmViewer();
+    qDebug() << "Dialog::on_farmViewBtn_clicked - showFarmViewer() returned, button click handler complete";
 }
 
 void Dialog::onDeviceDisconnected(QString serial)
 {
     GroupController::instance().removeDevice(serial);
-    
-    // Also remove from FarmViewer if it exists
-    FarmViewer::instance().removeDevice(serial);
+
+    // Also remove from FarmViewer if it exists (but only if it was already created)
+    if (FarmViewer::s_instance != nullptr) {
+        FarmViewer::instance().removeDevice(serial);
+    }
     
     auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
     if (!device) {
