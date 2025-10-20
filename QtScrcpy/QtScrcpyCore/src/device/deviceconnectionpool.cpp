@@ -80,9 +80,35 @@ QSharedPointer<Device> DeviceConnectionPool::acquireConnection(const DeviceParam
     }
 
     // Create new connection
-    qDebug() << "DeviceConnectionPool: Creating new connection for" << serial;
+    qInfo() << "========================================";
+    qInfo() << "DeviceConnectionPool: Creating new connection for" << serial;
+    qInfo() << "  Port:" << params.localPort;
+    qInfo() << "  Resolution:" << params.maxSize;
+    qInfo() << "  Bitrate:" << params.bitRate;
+    qInfo() << "========================================";
 
-    auto device = QSharedPointer<Device>::create(params);
+    qInfo() << "DeviceConnectionPool: Creating QSharedPointer<Device>...";
+    QSharedPointer<Device> device;
+    try {
+        device = QSharedPointer<Device>::create(params);
+        qInfo() << "DeviceConnectionPool: Device created successfully";
+    } catch (const std::exception& e) {
+        qCritical() << "DeviceConnectionPool: EXCEPTION creating Device:" << e.what();
+        emit connectionFailed(serial);
+        return QSharedPointer<Device>();
+    } catch (...) {
+        qCritical() << "DeviceConnectionPool: UNKNOWN EXCEPTION creating Device";
+        emit connectionFailed(serial);
+        return QSharedPointer<Device>();
+    }
+
+    if (!device) {
+        qCritical() << "DeviceConnectionPool: Device pointer is null after creation!";
+        emit connectionFailed(serial);
+        return QSharedPointer<Device>();
+    }
+
+    qInfo() << "DeviceConnectionPool: Creating PooledConnection...";
     auto pooledConn = QSharedPointer<PooledConnection>::create();
 
     pooledConn->device = device;
@@ -92,21 +118,30 @@ QSharedPointer<Device> DeviceConnectionPool::acquireConnection(const DeviceParam
     pooledConn->usageCount = 1;
     pooledConn->lastUsedTime.start();
 
+    qInfo() << "DeviceConnectionPool: Adding to connection pool...";
     m_connections[serial] = pooledConn;
 
-    qDebug() << "DeviceConnectionPool: New connection created. Total connections:"
-             << m_connections.size() << "Active:" << getActiveConnectionCount();
+    qInfo() << "DeviceConnectionPool: New connection created successfully!";
+    qInfo() << "  Total connections:" << m_connections.size();
+    // Don't call getActiveConnectionCount() here - it would cause deadlock (mutex already locked)
+    qInfo() << "  Connection is now active (inUse=true)";
+    qInfo() << "========================================";
 
+    qInfo() << "DeviceConnectionPool: About to emit connectionAcquired signal...";
     emit connectionAcquired(serial);
+    qInfo() << "DeviceConnectionPool: connectionAcquired signal emitted successfully";
 
     // Check memory usage
+    qInfo() << "DeviceConnectionPool: Checking memory usage...";
     quint64 memUsage = estimateMemoryUsage();
+    qInfo() << "DeviceConnectionPool: Memory usage:" << (memUsage / 1024 / 1024) << "MB";
     if (memUsage > 500 * 1024 * 1024) { // Warn if over 500MB
         qWarning() << "DeviceConnectionPool: High memory usage detected:"
                    << (memUsage / 1024 / 1024) << "MB";
         emit memoryWarning(memUsage);
     }
 
+    qInfo() << "DeviceConnectionPool: Returning device pointer...";
     return device;
 }
 
@@ -123,8 +158,8 @@ void DeviceConnectionPool::releaseConnection(const QString& serial)
     pooledConn->inUse = false;
     pooledConn->lastUsedTime.restart();
 
-    qDebug() << "DeviceConnectionPool: Released connection for" << serial
-             << "Active connections:" << getActiveConnectionCount();
+    qDebug() << "DeviceConnectionPool: Released connection for" << serial;
+    // Don't call getActiveConnectionCount() here - mutex already locked
 
     emit connectionReleased(serial);
 }

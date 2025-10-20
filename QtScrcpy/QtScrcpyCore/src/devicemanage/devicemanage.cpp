@@ -34,21 +34,37 @@ QPointer<IDevice> DeviceManage::getDevice(const QString &serial)
 
 QStringList DeviceManage::getAllConnectedSerials() const
 {
-    return m_devices.keys();
+    QStringList serials = m_devices.keys();
+    qInfo() << "DeviceManage::getAllConnectedSerials() called";
+    qInfo() << "  m_devices map size:" << m_devices.size();
+    qInfo() << "  Connected serials:" << serials;
+    for (const QString& serial : serials) {
+        auto device = m_devices[serial];
+        qInfo() << "    -" << serial << "device pointer:" << (device ? "valid" : "null");
+    }
+    return serials;
 }
 
 bool DeviceManage::connectDevice(qsc::DeviceParams params)
 {
+    qInfo() << "========================================";
+    qInfo() << "DeviceManage::connectDevice() START:" << params.serial;
+    qInfo() << "========================================";
+
     if (params.serial.trimmed().isEmpty()) {
+        qWarning() << "DeviceManage: Serial is empty, aborting";
         return false;
     }
     if (m_devices.contains(params.serial)) {
+        qWarning() << "DeviceManage: Device already exists in m_devices map:" << params.serial;
         return false;
     }
     if (DM_MAX_DEVICES_NUM < m_devices.size()) {
-        qInfo("over the maximum number of connections");
+        qWarning() << "DeviceManage: Over the maximum number of connections";
         return false;
     }
+
+    qInfo() << "DeviceManage: Pre-flight checks passed, creating Device object...";
     /*
     // 没有必要分配端口，都用27183即可，连接建立以后server会释放监听的
     quint16 port = 0;
@@ -63,19 +79,78 @@ bool DeviceManage::connectDevice(qsc::DeviceParams params)
         }
     }
     */
-    IDevice *device = new Device(params);
+
+    // CRITICAL FIX: Add try-catch to prevent crashes during Device creation
+    IDevice *device = nullptr;
+    try {
+        qInfo() << "DeviceManage: Creating Device object for:" << params.serial;
+        qInfo() << "  Port:" << params.localPort;
+        qInfo() << "  Resolution:" << params.maxSize;
+        qInfo() << "  Bitrate:" << params.bitRate;
+        qInfo() << "  FPS:" << params.maxFps;
+
+        device = new Device(params);
+
+        if (!device) {
+            qCritical() << "DeviceManage: CRITICAL - Device constructor returned nullptr!";
+            qInfo() << "========================================";
+            return false;
+        }
+
+        qInfo() << "DeviceManage: Device object created successfully:" << device;
+
+    } catch (const std::exception& e) {
+        qCritical() << "DeviceManage: EXCEPTION during Device creation:" << e.what();
+        qCritical() << "  Serial:" << params.serial;
+        if (device) {
+            delete device;
+            device = nullptr;
+        }
+        qInfo() << "========================================";
+        return false;
+    } catch (...) {
+        qCritical() << "DeviceManage: UNKNOWN EXCEPTION during Device creation";
+        qCritical() << "  Serial:" << params.serial;
+        if (device) {
+            delete device;
+            device = nullptr;
+        }
+        qInfo() << "========================================";
+        return false;
+    }
+
+    qInfo() << "DeviceManage: Connecting Device signals...";
     connect(device, &Device::deviceConnected, this, &DeviceManage::onDeviceConnected);
     connect(device, &Device::deviceDisconnected, this, &DeviceManage::onDeviceDisconnected);
 
     // Add device to map BEFORE connecting to make it available for signal handlers
+    qInfo() << "DeviceManage: Adding device to m_devices map";
     m_devices[params.serial] = device;
 
-    if (!device->connectDevice()) {
+    qInfo() << "DeviceManage: Calling device->connectDevice()...";
+    bool connectResult = false;
+    try {
+        connectResult = device->connectDevice();
+    } catch (const std::exception& e) {
+        qCritical() << "DeviceManage: EXCEPTION during device->connectDevice():" << e.what();
+        connectResult = false;
+    } catch (...) {
+        qCritical() << "DeviceManage: UNKNOWN EXCEPTION during device->connectDevice()";
+        connectResult = false;
+    }
+
+    if (!connectResult) {
         // Connection failed, remove from map and clean up
+        qWarning() << "DeviceManage: device->connectDevice() returned false, cleaning up";
         m_devices.remove(params.serial);
         delete device;
+        qInfo() << "========================================";
         return false;
     }
+
+    qInfo() << "DeviceManage: device->connectDevice() returned true (async connection started)";
+    qInfo() << "DeviceManage: Waiting for Device to emit deviceConnected signal...";
+    qInfo() << "========================================";
     return true;
 }
 
@@ -105,10 +180,24 @@ void DeviceManage::disconnectAllDevice()
 
 void DeviceManage::onDeviceConnected(bool success, const QString &serial, const QString &deviceName, const QSize &size)
 {
+    qInfo() << "========================================";
+    qInfo() << "DeviceManage::onDeviceConnected() - Signal received from Device";
+    qInfo() << "  Serial:" << serial;
+    qInfo() << "  Success:" << success;
+    qInfo() << "  DeviceName:" << deviceName;
+    qInfo() << "  Size:" << size;
+    qInfo() << "========================================";
+
+    qInfo() << "DeviceManage: Forwarding deviceConnected signal to FarmViewer...";
     emit deviceConnected(success, serial, deviceName, size);
+    qInfo() << "DeviceManage: deviceConnected signal emitted";
+
     if (!success) {
+        qWarning() << "DeviceManage: Connection failed, removing device:" << serial;
         removeDevice(serial);
     }
+
+    qInfo() << "========================================";
 }
 
 void DeviceManage::onDeviceDisconnected(QString serial)

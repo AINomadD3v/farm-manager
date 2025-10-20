@@ -10,6 +10,7 @@
 #include "config.h"
 #include "dialog.h"
 #include "mousetap/mousetap.h"
+#include "farmviewer.h"
 
 static Dialog *g_mainDlg = Q_NULLPTR;
 static QtMessageHandler g_oldMessageHandler = Q_NULLPTR;
@@ -37,7 +38,7 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef Q_OS_LINUX
-    qputenv("QTSCRCPY_ADB_PATH", "../../../QtScrcpy/QtScrcpyCore/src/third_party/adb/linux/adb");
+    qputenv("QTSCRCPY_ADB_PATH", "./adb");  // Use ADB symlink in output directory (works with NixOS)
     qputenv("QTSCRCPY_SERVER_PATH", "../../../QtScrcpy/QtScrcpyCore/src/third_party/scrcpy-server");
     qputenv("QTSCRCPY_KEYMAP_PATH", "../../../keymap");
     qputenv("QTSCRCPY_CONFIG_PATH", "../../../config");
@@ -108,6 +109,11 @@ int main(int argc, char *argv[])
     }
 
     qsc::AdbProcess::setAdbPath(Config::getInstance().getAdbPath());
+
+    // Setup Unix signal handlers BEFORE starting event loop
+    // This enables graceful shutdown on Ctrl+C and SIGTERM
+    qInfo() << "Setting up Unix signal handlers for graceful shutdown...";
+    FarmViewer::setupUnixSignalHandlers();
 
     g_mainDlg = new Dialog {};
     g_mainDlg->show();

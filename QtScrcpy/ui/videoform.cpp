@@ -63,24 +63,15 @@ void VideoForm::initUI()
 #endif
     }
 
-    m_videoWidget = new QYUVOpenGLWidget();
-    m_videoWidget->hide();
-    ui->keepRatioWidget->setWidget(m_videoWidget);
+    // DON'T create QYUVOpenGLWidget here - will be created on-demand when first frame arrives
+    // This prevents GPU resource exhaustion when showing 78+ device tiles
+    m_videoWidget = nullptr;
+
     ui->keepRatioWidget->setWidthHeightRatio(m_widthHeightRatio);
 
-    m_fpsLabel = new QLabel(m_videoWidget);
-    QFont ft;
-    ft.setPointSize(15);
-    ft.setWeight(QFont::Light);
-    ft.setBold(true);
-    m_fpsLabel->setFont(ft);
-    m_fpsLabel->move(5, 15);
-    m_fpsLabel->setMinimumWidth(100);
-    m_fpsLabel->setStyleSheet(R"(QLabel {color: #00FF00;})");
-
     // Create placeholder widget for when no video is streaming
-    // Make it a child of the video widget so it overlays properly
-    m_placeholderWidget = new QWidget(m_videoWidget);
+    // Make it a child of keepRatioWidget since video widget doesn't exist yet
+    m_placeholderWidget = new QWidget(ui->keepRatioWidget);
     m_placeholderWidget->setStyleSheet(R"(
         QWidget#placeholderWidget {
             background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -132,31 +123,87 @@ void VideoForm::initUI()
     // Add spacer to center content
     placeholderLayout->addStretch(1);
 
-    // Show video widget (with placeholder) by default
-    m_videoWidget->show();
+    // Show placeholder by default (video widget will be created on-demand)
     m_placeholderWidget->show();
     m_placeholderWidget->raise(); // Ensure it's on top
 
-    // Size placeholder to fill video widget
-    m_placeholderWidget->setGeometry(m_videoWidget->rect());
+    // Size placeholder to fill the keepRatioWidget
+    m_placeholderWidget->setGeometry(ui->keepRatioWidget->rect());
 
-    // Install event filter to track video widget resizes
-    m_videoWidget->installEventFilter(this);
+    // Install event filter on keepRatioWidget to handle resizing
+    ui->keepRatioWidget->installEventFilter(this);
+
+    // Set cursor to pointing hand for clickable tiles
+    setCursor(Qt::PointingHandCursor);
 
     setMouseTracking(true);
-    m_videoWidget->setMouseTracking(true);
     ui->keepRatioWidget->setMouseTracking(true);
+}
+
+void VideoForm::createVideoWidget()
+{
+    // Only create once
+    if (m_videoWidget) {
+        return;
+    }
+
+    qInfo() << "VideoForm::createVideoWidget() - Creating OpenGL widget for:" << m_serial;
+
+    // Create the OpenGL video widget
+    m_videoWidget = new QYUVOpenGLWidget(this);
+    ui->keepRatioWidget->setWidget(m_videoWidget);
+
+    // Create FPS label as child of video widget
+    m_fpsLabel = new QLabel(m_videoWidget);
+    QFont ft;
+    ft.setPointSize(15);
+    ft.setWeight(QFont::Light);
+    ft.setBold(true);
+    m_fpsLabel->setFont(ft);
+    m_fpsLabel->move(5, 15);
+    m_fpsLabel->setMinimumWidth(100);
+    m_fpsLabel->setStyleSheet(R"(QLabel {color: #00FF00;})");
+    m_fpsLabel->hide(); // Hidden by default
+
+    // Reparent placeholder to video widget
+    if (m_placeholderWidget) {
+        m_placeholderWidget->setParent(m_videoWidget);
+        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+        m_placeholderWidget->show();
+        m_placeholderWidget->raise();
+    }
+
+    // Show the video widget
+    m_videoWidget->show();
+    m_videoWidget->setMouseTracking(true);
+
+    // Install event filter on video widget for resize tracking
+    m_videoWidget->installEventFilter(this);
+
+    qInfo() << "VideoForm::createVideoWidget() - OpenGL widget created successfully for:" << m_serial;
 }
 
 bool VideoForm::eventFilter(QObject *watched, QEvent *event)
 {
-    // Update placeholder size when video widget is resized
-    if (watched == m_videoWidget && event->type() == QEvent::Resize && m_placeholderWidget) {
-        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+    // Update placeholder size when video widget or keepRatioWidget is resized
+    if (event->type() == QEvent::Resize && m_placeholderWidget) {
+        QWidget* resizedWidget = nullptr;
+        if (watched == m_videoWidget && m_videoWidget) {
+            resizedWidget = m_videoWidget;
+            m_placeholderWidget->setGeometry(m_videoWidget->rect());
+        } else if (watched == ui->keepRatioWidget && !m_videoWidget) {
+            // If video widget hasn't been created yet, size to keepRatioWidget
+            resizedWidget = ui->keepRatioWidget;
+            m_placeholderWidget->setGeometry(ui->keepRatioWidget->rect());
+        }
+
+        if (!resizedWidget) {
+            return QWidget::eventFilter(watched, event);
+        }
 
         // Adjust font sizes based on widget size
-        int width = m_videoWidget->width();
-        int height = m_videoWidget->height();
+        int width = resizedWidget->width();
+        int height = resizedWidget->height();
 
         if (m_placeholderSerialLabel && m_placeholderStatusLabel) {
             // Scale font sizes for small tiles
@@ -203,6 +250,9 @@ bool VideoForm::eventFilter(QObject *watched, QEvent *event)
 QRect VideoForm::getGrabCursorRect()
 {
     QRect rc;
+    if (!m_videoWidget) {
+        return rc; // Return empty rect if video widget not created yet
+    }
 #if defined(Q_OS_WIN32)
     rc = QRect(ui->keepRatioWidget->mapToGlobal(m_videoWidget->pos()), m_videoWidget->size());
     // high dpi support
@@ -266,7 +316,27 @@ void VideoForm::showFPS(bool show)
 
 void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV)
 {
+    // Create OpenGL video widget on-demand when first frame arrives
+    // This prevents GPU resource exhaustion when showing 78+ device tiles
+    if (!m_videoWidget) {
+        qInfo() << "========================================";
+        qInfo() << "VideoForm::updateRender() - FIRST FRAME RECEIVED!";
+        qInfo() << "  Serial:" << m_serial;
+        qInfo() << "  Frame size:" << width << "x" << height;
+        qInfo() << "  Creating OpenGL widget on-demand...";
+        qInfo() << "========================================";
+
+        createVideoWidget();
+    }
+
+    // Safety check - should never happen but be defensive
+    if (!m_videoWidget) {
+        qWarning() << "VideoForm::updateRender() - Failed to create video widget for:" << m_serial;
+        return;
+    }
+
     if (m_videoWidget->isHidden()) {
+        qInfo() << "VideoForm: Video widget was hidden, showing it now for:" << m_serial;
         if (m_loadingWidget) {
             m_loadingWidget->close();
         }
@@ -274,6 +344,7 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
 
         // Hide placeholder when video starts
         if (m_placeholderWidget) {
+            qInfo() << "VideoForm: Hiding placeholder widget for:" << m_serial;
             m_placeholderWidget->hide();
         }
 
@@ -295,6 +366,49 @@ void VideoForm::setSerial(const QString &serial)
     // Update placeholder with serial number
     if (m_placeholderSerialLabel) {
         m_placeholderSerialLabel->setText(serial);
+    }
+}
+
+void VideoForm::updatePlaceholderStatus(const QString& status, const QString& backgroundColor)
+{
+    if (m_placeholderStatusLabel) {
+        m_placeholderStatusLabel->setText(status);
+    }
+
+    if (!backgroundColor.isEmpty() && m_placeholderWidget) {
+        QString styleSheet;
+        if (backgroundColor == "connecting") {
+            // Yellow/orange gradient for connecting state
+            styleSheet = R"(
+                QWidget#placeholderWidget {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #fdcb6e, stop:1 #e17055);
+                    border: 2px solid #fdcb6e;
+                    border-radius: 8px;
+                }
+            )";
+        } else if (backgroundColor == "streaming") {
+            // Green tint for streaming state
+            styleSheet = R"(
+                QWidget#placeholderWidget {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #00b894, stop:1 #00cec9);
+                    border: 2px solid #00b894;
+                    border-radius: 8px;
+                }
+            )";
+        } else {
+            // Default gray gradient for disconnected state
+            styleSheet = R"(
+                QWidget#placeholderWidget {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #2d3436, stop:1 #636e72);
+                    border: 2px solid #74b9ff;
+                    border-radius: 8px;
+                }
+            )";
+        }
+        m_placeholderWidget->setStyleSheet(styleSheet);
     }
 }
 
@@ -691,6 +805,32 @@ void VideoForm::staysOnTop(bool top)
 void VideoForm::mousePressEvent(QMouseEvent *event)
 {
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+
+    // Check if click is on placeholder (when visible) - emit deviceClicked signal
+    if (event->button() == Qt::LeftButton && m_placeholderWidget && m_placeholderWidget->isVisible()) {
+        // Flash effect for visual feedback
+        if (m_placeholderWidget) {
+            QString currentBg = m_placeholderWidget->styleSheet();
+            m_placeholderWidget->setStyleSheet(R"(
+                QWidget#placeholderWidget {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #74b9ff, stop:1 #0984e3);
+                    border: 2px solid #74b9ff;
+                    border-radius: 8px;
+                }
+            )");
+            QTimer::singleShot(100, this, [this, currentBg]() {
+                if (m_placeholderWidget) {
+                    m_placeholderWidget->setStyleSheet(currentBg);
+                }
+            });
+        }
+
+        emit deviceClicked(m_serial);
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::MiddleButton) {
         if (device && !device->isCurrentCustomKeymap()) {
             device->postGoHome();
@@ -713,7 +853,7 @@ void VideoForm::mousePressEvent(QMouseEvent *event)
         QPointF globalPos = event->globalPosition();
 #endif
 
-    if (m_videoWidget->geometry().contains(event->pos())) {
+    if (m_videoWidget && m_videoWidget->geometry().contains(event->pos())) {
         if (!device) {
             return;
         }
@@ -740,7 +880,7 @@ void VideoForm::mouseReleaseEvent(QMouseEvent *event)
 {
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
     if (m_dragPosition.isNull()) {
-        if (!device) {
+        if (!device || !m_videoWidget) {
             return;
         }
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
@@ -781,7 +921,7 @@ void VideoForm::mouseMoveEvent(QMouseEvent *event)
         QPointF globalPos = event->globalPosition();
 #endif
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-    if (m_videoWidget->geometry().contains(event->pos())) {
+    if (m_videoWidget && m_videoWidget->geometry().contains(event->pos())) {
         if (!device) {
             return;
         }
@@ -799,7 +939,7 @@ void VideoForm::mouseMoveEvent(QMouseEvent *event)
 void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
 {
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
-    if (event->button() == Qt::LeftButton && !m_videoWidget->geometry().contains(event->pos())) {
+    if (event->button() == Qt::LeftButton && m_videoWidget && !m_videoWidget->geometry().contains(event->pos())) {
         if (!isMaximized()) {
             removeBlackRect();
         }
@@ -809,7 +949,7 @@ void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
         emit device->postBackOrScreenOn(event->type() == QEvent::MouseButtonPress);
     }
 
-    if (m_videoWidget->geometry().contains(event->pos())) {
+    if (m_videoWidget && m_videoWidget->geometry().contains(event->pos())) {
         if (!device) {
             return;
         }
@@ -829,19 +969,16 @@ void VideoForm::mouseDoubleClickEvent(QMouseEvent *event)
 void VideoForm::wheelEvent(QWheelEvent *event)
 {
     auto device = qsc::IDeviceManage::getInstance().getDevice(m_serial);
+    if (!device || !m_videoWidget) {
+        return;
+    }
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     if (m_videoWidget->geometry().contains(event->position().toPoint())) {
-        if (!device) {
-            return;
-        }
         QPointF pos = m_videoWidget->mapFrom(this, event->position().toPoint());
         QWheelEvent wheelEvent(
             pos, event->globalPosition(), event->pixelDelta(), event->angleDelta(), event->buttons(), event->modifiers(), event->phase(), event->inverted());
 #else
     if (m_videoWidget->geometry().contains(event->pos())) {
-        if (!device) {
-            return;
-        }
         QPointF pos = m_videoWidget->mapFrom(this, event->pos());
 
         QWheelEvent wheelEvent(
@@ -862,7 +999,9 @@ void VideoForm::keyPressEvent(QKeyEvent *event)
         switchFullScreen();
     }
 
-    emit device->keyEvent(event, m_videoWidget->frameSize(), m_videoWidget->size());
+    if (m_videoWidget) {
+        emit device->keyEvent(event, m_videoWidget->frameSize(), m_videoWidget->size());
+    }
 }
 
 void VideoForm::keyReleaseEvent(QKeyEvent *event)
@@ -871,7 +1010,9 @@ void VideoForm::keyReleaseEvent(QKeyEvent *event)
     if (!device) {
         return;
     }
-    emit device->keyEvent(event, m_videoWidget->frameSize(), m_videoWidget->size());
+    if (m_videoWidget) {
+        emit device->keyEvent(event, m_videoWidget->frameSize(), m_videoWidget->size());
+    }
 }
 
 void VideoForm::paintEvent(QPaintEvent *paint)
@@ -897,8 +1038,12 @@ void VideoForm::showEvent(QShowEvent *event)
     }
 
     // Update placeholder size when showing
-    if (m_placeholderWidget && m_videoWidget) {
-        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+    if (m_placeholderWidget) {
+        if (m_videoWidget) {
+            m_placeholderWidget->setGeometry(m_videoWidget->rect());
+        } else {
+            m_placeholderWidget->setGeometry(ui->keepRatioWidget->rect());
+        }
     }
 }
 
@@ -927,9 +1072,13 @@ void VideoForm::resizeEvent(QResizeEvent *event)
         }
     }
 
-    // Update placeholder widget size to match video widget
-    if (m_placeholderWidget && m_videoWidget) {
-        m_placeholderWidget->setGeometry(m_videoWidget->rect());
+    // Update placeholder widget size to match video widget or keepRatioWidget
+    if (m_placeholderWidget) {
+        if (m_videoWidget) {
+            m_placeholderWidget->setGeometry(m_videoWidget->rect());
+        } else {
+            m_placeholderWidget->setGeometry(ui->keepRatioWidget->rect());
+        }
     }
 }
 

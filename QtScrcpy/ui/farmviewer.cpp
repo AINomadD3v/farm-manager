@@ -13,6 +13,8 @@
 #include <QRandomGenerator>
 #include <QFileInfo>
 #include <QCoreApplication>
+#include <QMessageBox>
+#include <QSet>
 
 #include <signal.h>
 #include <unistd.h>
@@ -30,6 +32,7 @@ FarmViewer::FarmViewer(QWidget *parent)
     , m_gridLayout(nullptr)
     , m_mainLayout(nullptr)
     , m_toolbarLayout(nullptr)
+    , m_activeConnections(0)
     , m_connectionThrottleTimer(nullptr)
     , m_resourceCheckTimer(nullptr)
     , m_gridRows(2)
@@ -91,9 +94,91 @@ FarmViewer::FarmViewer(QWidget *parent)
     qInfo() << "FarmViewer: Device detection ADB connection completed";
 
     qInfo() << "FarmViewer: Connecting to IDeviceManage signals...";
-    // SIMPLIFIED: Remove IDeviceManage signal connections since we're not auto-connecting
-    // Devices are only displayed, not connected
-    qInfo() << "FarmViewer: Skipping IDeviceManage signal connections (display-only mode)";
+    // Connect to IDeviceManage signals to track connection state
+    connect(&qsc::IDeviceManage::getInstance(), &qsc::IDeviceManage::deviceConnected,
+        this, [this](bool success, const QString& serial, const QString& deviceName, const QSize& size) {
+            Q_UNUSED(deviceName);
+            Q_UNUSED(size);
+
+            qInfo() << "========================================";
+            qInfo() << "FarmViewer: deviceConnected signal received from DeviceManage";
+            qInfo() << "  Serial:" << serial;
+            qInfo() << "  Success:" << success;
+            qInfo() << "  DeviceName:" << deviceName;
+            qInfo() << "  Size:" << size;
+            qInfo() << "========================================";
+
+            if (success) {
+                qInfo() << "FarmViewer: Connection successful, updating state...";
+
+                // Mark device as connected
+                m_connectedDevices.insert(serial);
+                m_activeConnections++;
+
+                qInfo() << "FarmViewer: Device marked as connected:" << serial;
+                qInfo() << "  Active connections:" << m_activeConnections;
+
+                // Register VideoForm as observer to receive video frames
+                if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+                    qInfo() << "FarmViewer: VideoForm exists for device, registering as observer...";
+                    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+                    if (device) {
+                        qInfo() << "FarmViewer: Got Device pointer, calling registerDeviceObserver()...";
+                        device->registerDeviceObserver(m_deviceForms[serial]);
+                        qInfo() << "FarmViewer: VideoForm registered as observer for:" << serial;
+                    } else {
+                        qWarning() << "FarmViewer: Failed to get Device pointer for:" << serial;
+                    }
+
+                    // Update placeholder status to "Streaming" (will auto-hide when video arrives)
+                    qInfo() << "FarmViewer: Updating placeholder status to 'Streaming'";
+                    m_deviceForms[serial]->updatePlaceholderStatus("Streaming", "streaming");
+                } else {
+                    qWarning() << "FarmViewer: No VideoForm found for device:" << serial;
+                }
+
+                qInfo() << "========================================";
+            } else {
+                // Connection failed - reset to "Ready to Connect"
+                qWarning() << "========================================";
+                qWarning() << "FarmViewer: Device connection FAILED:" << serial;
+                qWarning() << "========================================";
+                if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+                    m_deviceForms[serial]->updatePlaceholderStatus("Connection Failed - Click to Retry", "disconnected");
+                }
+            }
+        });
+
+    connect(&qsc::IDeviceManage::getInstance(), &qsc::IDeviceManage::deviceDisconnected,
+        this, [this](QString serial) {
+            qInfo() << "FarmViewer: Device disconnected signal received:" << serial;
+
+            // Update state tracking
+            m_connectedDevices.remove(serial);
+            if (m_activeConnections > 0) {
+                m_activeConnections--;
+            }
+
+            qDebug() << "FarmViewer: Device marked as disconnected:" << serial
+                     << "Active connections:" << m_activeConnections;
+
+            // Update placeholder to show "Ready to Connect"
+            if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+                m_deviceForms[serial]->updatePlaceholderStatus("Ready to Connect", "disconnected");
+
+                // Make sure placeholder is visible again
+                auto videoForm = m_deviceForms[serial];
+                if (videoForm) {
+                    QWidget* placeholder = videoForm->findChild<QWidget*>("placeholderWidget");
+                    if (placeholder) {
+                        placeholder->show();
+                        placeholder->raise();
+                    }
+                }
+            }
+        });
+
+    qInfo() << "FarmViewer: IDeviceManage signal connections completed";
 
     qInfo() << "FarmViewer: Setting up Unix signal socket notifier...";
     // Setup socket notifier for Unix signals
@@ -245,12 +330,15 @@ void FarmViewer::addDevice(const QString& serial, const QString& deviceName, con
     m_deviceForms[serial] = videoForm;
     m_deviceContainers[serial] = container;
 
-    // SIMPLIFIED: Do NOT register observers or connect to device
-    // Just display the placeholder UI
+    // Connect click signal for click-to-connect functionality
+    connect(videoForm, &VideoForm::deviceClicked, this, &FarmViewer::onDeviceTileClicked);
+
+    // SIMPLIFIED: Do NOT auto-register observers or auto-connect to device
+    // Just display the placeholder UI - user will click to connect
     qDebug() << "FarmViewer: Device displayed in UI (ready for manual connection):" << serial;
 
-    // Recalculate optimal grid for new device count
-    calculateOptimalGrid(newDeviceCount, this->size());
+    // REMOVED: calculateOptimalGrid() - this will be called once after batch addition
+    // calculateOptimalGrid(newDeviceCount, this->size());
 
     // Update grid layout
     updateGridLayout();
@@ -262,8 +350,7 @@ void FarmViewer::addDevice(const QString& serial, const QString& deviceName, con
     videoForm->show();
 
     qDebug() << "FarmViewer: Device UI placeholder added successfully" << serial
-             << "Grid:" << m_gridRows << "x" << m_gridCols
-             << "Tile size:" << tileSize;
+             << "Grid will be calculated after all devices are added";
 }
 
 void FarmViewer::removeDevice(const QString& serial)
@@ -434,8 +521,12 @@ QSize FarmViewer::getOptimalTileSize(int deviceCount, const QSize& windowSize) c
 {
     Q_UNUSED(windowSize);
 
-    // Tile sizes scale down with device count
-    // Maintain 9:16 aspect ratio (portrait phone)
+    // CRITICAL FIX: Enforce MINIMUM tile sizes for readability
+    // Tiles should never be smaller than 200x350 to be usable
+    // For large device counts, use scrolling instead of shrinking tiles
+
+    const int MIN_WIDTH = 200;
+    const int MIN_HEIGHT = 350;
 
     int width, height;
 
@@ -443,16 +534,23 @@ QSize FarmViewer::getOptimalTileSize(int deviceCount, const QSize& windowSize) c
         width = 300;
         height = 600;
     } else if (deviceCount <= 20) {
-        width = 220;
-        height = 450;
+        width = 250;
+        height = 480;
     } else if (deviceCount <= 50) {
-        width = 160;
-        height = 320;
+        // Don't go below minimum - use scrolling instead
+        width = 220;
+        height = 400;
     } else {
-        // 100+ devices: very small tiles
-        width = 120;
-        height = 240;
+        // 50+ devices: use minimum size and rely on scrolling
+        width = MIN_WIDTH;
+        height = MIN_HEIGHT;
     }
+
+    // Enforce absolute minimum
+    width = qMax(width, MIN_WIDTH);
+    height = qMax(height, MIN_HEIGHT);
+
+    qDebug() << "FarmViewer: Tile size for" << deviceCount << "devices:" << width << "x" << height;
 
     return QSize(width, height);
 }
@@ -535,7 +633,25 @@ void FarmViewer::showFarmViewer()
             QString deviceName = serial; // TODO: Get actual device name if available
             QSize size(720, 1280); // TODO: Get actual screen size if available
             qInfo() << "FarmViewer: Adding already-connected device:" << serial;
+
+            // Add device to UI
             addDevice(serial, deviceName, size);
+
+            // CRITICAL: Register VideoForm as observer to receive video frames
+            if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+                device->registerDeviceObserver(m_deviceForms[serial]);
+                qInfo() << "FarmViewer: Registered VideoForm as observer for already-connected device:" << serial;
+
+                // Mark device as connected
+                m_connectedDevices.insert(serial);
+                m_activeConnections++;
+
+                // Update status to "Streaming" (placeholder will auto-hide when video frames arrive)
+                m_deviceForms[serial]->updatePlaceholderStatus("Streaming", "streaming");
+
+                qInfo() << "FarmViewer: Device marked as streaming:" << serial
+                        << "Active connections:" << m_activeConnections;
+            }
         }
     }
 
@@ -618,23 +734,146 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
 
     qDebug() << "FarmViewer: Found" << devices.size() << "devices";
 
-    // SIMPLIFIED: Just display devices without connecting/streaming
-    // Add each device to the UI grid
+    // CRITICAL FIX: Suspend layout updates during batch device addition
+    // This prevents calculateOptimalGrid() from being called for EVERY device
+    qInfo() << "FarmViewer: SUSPENDING layout updates for batch device addition";
+    m_gridLayout->setEnabled(false);
+
+    // Track how many new devices we're adding
+    int devicesAddedCount = 0;
+
+    // Add all devices to the UI grid WITHOUT triggering layout recalculations
     for (const QString& serial : devices) {
         if (!m_deviceForms.contains(serial)) {
-            qDebug() << "FarmViewer: Adding device to UI (no connection):" << serial;
-            // Display device with default size - NO CONNECTION
-            addDevice(serial, serial, QSize(720, 1280));
+            qDebug() << "FarmViewer: Adding device to UI (no layout update):" << serial;
+
+            // Create VideoForm with default size (will be resized later)
+            auto videoForm = new VideoForm(true, false, false, this);
+            videoForm->setSerial(serial);
+
+            // Create container widget
+            QWidget* container = createDeviceWidget(serial, serial);
+
+            // Add VideoForm to container
+            QVBoxLayout* containerLayout = qobject_cast<QVBoxLayout*>(container->layout());
+            if (containerLayout) {
+                containerLayout->insertWidget(0, videoForm, 1);
+            }
+
+            // Store references
+            m_deviceForms[serial] = videoForm;
+            m_deviceContainers[serial] = container;
+
+            // Connect click signal
+            connect(videoForm, &VideoForm::deviceClicked, this, &FarmViewer::onDeviceTileClicked);
+
+            videoForm->show();
+            devicesAddedCount++;
         } else {
             qDebug() << "FarmViewer: Device already displayed, skipping:" << serial;
         }
     }
 
-    // Update status to show detected devices
-    m_statusLabel->setText(QString("%1 devices detected").arg(devices.size()));
-    m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
+    // CRITICAL FIX: Now calculate optimal grid ONCE for all devices
+    int totalDevices = m_deviceForms.size();
+    qInfo() << "FarmViewer: All devices added. Now calculating optimal grid ONCE for" << totalDevices << "devices";
+    calculateOptimalGrid(totalDevices, this->size());
+
+    // Update all widget sizes based on the final grid calculation
+    QSize tileSize = getOptimalTileSize(totalDevices, this->size());
+    qInfo() << "FarmViewer: Applying tile size to all devices:" << tileSize;
+
+    for (auto it = m_deviceContainers.begin(); it != m_deviceContainers.end(); ++it) {
+        if (!it.value().isNull()) {
+            it.value()->setMinimumSize(tileSize);
+            it.value()->setMaximumSize(tileSize * 2);
+        }
+    }
+
+    for (auto it = m_deviceForms.begin(); it != m_deviceForms.end(); ++it) {
+        if (!it.value().isNull()) {
+            it.value()->setMinimumSize(tileSize * 0.9);
+            it.value()->setMaximumSize(tileSize * 1.8);
+        }
+    }
+
+    // Resume layout updates and rebuild grid ONCE
+    qInfo() << "FarmViewer: RESUMING layout updates and rebuilding grid";
+    m_gridLayout->setEnabled(true);
+    updateGridLayout();
+
+    // Update status
+    updateStatus();
+
+    qInfo() << "FarmViewer: Batch device addition complete";
+    qInfo() << "  Added:" << devicesAddedCount << "new devices";
+    qInfo() << "  Total devices:" << totalDevices;
+    qInfo() << "  Final grid:" << m_gridRows << "x" << m_gridCols;
+    qInfo() << "  Tile size:" << tileSize;
+
+    // SAFETY FIX: Auto-connect only first device to test for crashes
+    // Once 1 device works reliably, increase MAX_CONCURRENT_STREAMS gradually
+    // This prevents overwhelming the system and allows crash debugging
+    int toConnect = qMin(devices.size(), MAX_CONCURRENT_STREAMS);
+    int remainingDevices = devices.size() - toConnect;
+
+    if (toConnect > 0) {
+        qInfo() << "FarmViewer: SAFETY MODE - Auto-connecting only first" << toConnect << "device(s) for testing...";
+        qInfo() << "FarmViewer: If successful, increase MAX_CONCURRENT_STREAMS in farmviewer.h";
+        m_statusLabel->setText(QString("Auto-connecting %1 device (testing mode)...").arg(toConnect));
+        m_statusLabel->setStyleSheet("color: #ff9500; font-size: 12px; font-weight: bold;");  // Orange for testing
+
+        // Show progress bar
+        m_connectionProgressBar->setMaximum(toConnect);
+        m_connectionProgressBar->setValue(0);
+        m_connectionProgressBar->setVisible(true);
+
+        // Connect devices sequentially with 500ms delay between each
+        for (int i = 0; i < toConnect; i++) {
+            const QString& serial = devices[i];
+
+            // Use QTimer to connect sequentially with delay
+            QTimer::singleShot(i * 500, this, [this, serial, i, toConnect, remainingDevices]() {
+                qInfo() << "FarmViewer: Auto-connecting device" << (i + 1) << "/" << toConnect << ":" << serial;
+
+                // Update progress
+                m_connectionProgressBar->setValue(i + 1);
+
+                // Update status with progress
+                QString statusText = QString("Connecting: %1/%2").arg(i + 1).arg(toConnect);
+                if (remainingDevices > 0) {
+                    statusText += QString(" (%1 ready to connect)").arg(remainingDevices);
+                }
+                m_statusLabel->setText(statusText);
+
+                // Trigger connection using existing click handler
+                onDeviceTileClicked(serial);
+
+                // Hide progress bar and show final status after last connection starts
+                if (i + 1 == toConnect) {
+                    QTimer::singleShot(1000, this, [this, toConnect, remainingDevices]() {
+                        m_connectionProgressBar->setVisible(false);
+                        QString finalStatus = QString("%1 devices streaming").arg(toConnect);
+                        if (remainingDevices > 0) {
+                            finalStatus += QString(", %1 ready to connect").arg(remainingDevices);
+                        }
+                        m_statusLabel->setText(finalStatus);
+                        qInfo() << "FarmViewer: Auto-connection complete:" << finalStatus;
+                    });
+                }
+            });
+        }
+    } else {
+        // No auto-connection, just show detected devices
+        m_statusLabel->setText(QString("%1 devices detected (ready for connection)").arg(devices.size()));
+        m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
+    }
 
     qInfo() << "FarmViewer: All" << devices.size() << "devices displayed in UI";
+    qInfo() << "FarmViewer: Scheduled auto-connection for" << toConnect << "devices";
+    if (remainingDevices > 0) {
+        qInfo() << "FarmViewer:" << remainingDevices << "devices remain as 'Ready to Connect'";
+    }
     qInfo() << "========================================";
 }
 
@@ -650,17 +889,23 @@ bool FarmViewer::isManagingDevice(const QString& serial) const
 
 void FarmViewer::connectToDevice(const QString& serial)
 {
-    qDebug() << "FarmViewer: Auto-connecting to device:" << serial;
+    qInfo() << "========================================";
+    qInfo() << "FarmViewer::connectToDevice() START:" << serial;
+    qInfo() << "========================================";
 
     // Don't connect if already connected
-    if (m_deviceForms.contains(serial)) {
-        qDebug() << "FarmViewer: Device already connected:" << serial;
+    if (m_connectedDevices.contains(serial)) {
+        qInfo() << "FarmViewer: Device already connected:" << serial;
+        qInfo() << "========================================";
         return;
     }
+
+    qInfo() << "FarmViewer: Device not yet connected, proceeding with connection";
 
     // Check connection pool limits
     if (!qsc::DeviceConnectionPool::instance().canAcquireNewConnection()) {
         qWarning() << "FarmViewer: Connection pool limit reached, cannot connect to:" << serial;
+        qInfo() << "========================================";
         return;
     }
 
@@ -680,12 +925,12 @@ void FarmViewer::connectToDevice(const QString& serial)
     params.localPort = nextPort++;
     if (nextPort > 30000) nextPort = 27183; // Wrap around to avoid exhausting ports
 
-    qDebug() << "FarmViewer: Connecting device" << serial
-             << "Port:" << params.localPort
-             << "Quality:" << qualityProfile.description
-             << "Resolution:" << qualityProfile.maxSize
-             << "Bitrate:" << (qualityProfile.bitRate / 1000000.0) << "Mbps"
-             << "FPS:" << qualityProfile.maxFps;
+    qInfo() << "FarmViewer: Configured connection parameters for device:" << serial;
+    qInfo() << "  Port:" << params.localPort;
+    qInfo() << "  Quality:" << qualityProfile.description;
+    qInfo() << "  Resolution:" << qualityProfile.maxSize;
+    qInfo() << "  Bitrate:" << (qualityProfile.bitRate / 1000000.0) << "Mbps";
+    qInfo() << "  FPS:" << qualityProfile.maxFps;
 
     // Set remaining parameters
     params.closeScreen = false;
@@ -708,14 +953,24 @@ void FarmViewer::connectToDevice(const QString& serial)
     params.scid = QRandomGenerator::global()->bounded(1, 10000) & 0x7FFFFFFF;
 
     // Acquire connection from pool (this will create or reuse a connection)
+    qInfo() << "FarmViewer: Acquiring connection from pool...";
     auto pooledDevice = qsc::DeviceConnectionPool::instance().acquireConnection(params);
+    qInfo() << "FarmViewer: acquireConnection() returned, pooledDevice is:" << (pooledDevice.isNull() ? "NULL" : "VALID");
 
     // Connect the device using IDeviceManage
-    qsc::IDeviceManage::getInstance().connectDevice(params);
+    qInfo() << "FarmViewer: Calling IDeviceManage::connectDevice()...";
+    bool connectResult = qsc::IDeviceManage::getInstance().connectDevice(params);
 
-    qDebug() << "FarmViewer: Connection request sent for device:" << serial
-             << "Total pool connections:" << qsc::DeviceConnectionPool::instance().getTotalConnectionCount()
-             << "Active:" << qsc::DeviceConnectionPool::instance().getActiveConnectionCount();
+    if (connectResult) {
+        qInfo() << "FarmViewer: IDeviceManage::connectDevice() returned SUCCESS";
+    } else {
+        qWarning() << "FarmViewer: IDeviceManage::connectDevice() returned FAILURE";
+    }
+
+    qInfo() << "FarmViewer: Connection request sent for device:" << serial;
+    qInfo() << "  Total pool connections:" << qsc::DeviceConnectionPool::instance().getTotalConnectionCount();
+    qInfo() << "  Active connections:" << qsc::DeviceConnectionPool::instance().getActiveConnectionCount();
+    qInfo() << "========================================";
 }
 
 const QString &FarmViewer::getServerPath()
@@ -734,6 +989,110 @@ const QString &FarmViewer::getServerPath()
 void FarmViewer::onGridSizeChanged()
 {
     // TODO: Implement grid size selector
+}
+
+void FarmViewer::onDeviceTileClicked(QString serial)
+{
+    qDebug() << "FarmViewer: Device tile clicked:" << serial;
+
+    // Check if device is already connected in FarmViewer
+    if (isDeviceConnected(serial)) {
+        qDebug() << "FarmViewer: Device is connected in FarmViewer, disconnecting:" << serial;
+        disconnectDevice(serial);
+        return;
+    }
+
+    // Check if device is already connected in DeviceManage but not yet registered in FarmViewer
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (device) {
+        qInfo() << "FarmViewer: Device already connected in DeviceManage, registering observer:" << serial;
+
+        // Register VideoForm as observer to receive video frames
+        if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+            device->registerDeviceObserver(m_deviceForms[serial]);
+            qInfo() << "FarmViewer: Registered VideoForm as observer for existing connection:" << serial;
+
+            // Mark device as connected
+            m_connectedDevices.insert(serial);
+            m_activeConnections++;
+
+            // Update status to "Streaming" (placeholder will auto-hide when video frames arrive)
+            m_deviceForms[serial]->updatePlaceholderStatus("Streaming", "streaming");
+
+            qInfo() << "FarmViewer: Device now streaming in FarmViewer:" << serial
+                    << "Active connections:" << m_activeConnections;
+        }
+        return;
+    }
+
+    // Device not connected at all - initiate new connection
+    // Check if we're at the connection limit
+    if (m_activeConnections >= MAX_CONCURRENT_STREAMS) {
+        QMessageBox::warning(this, "Connection Limit Reached",
+            QString("Maximum %1 devices can stream simultaneously.\nDisconnect a device first.")
+                .arg(MAX_CONCURRENT_STREAMS));
+        qWarning() << "FarmViewer: Connection limit reached, cannot connect:" << serial;
+        return;
+    }
+
+    qDebug() << "FarmViewer: Device is disconnected, connecting:" << serial;
+
+    // Update placeholder to "Connecting..." before starting connection
+    if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+        m_deviceForms[serial]->updatePlaceholderStatus("Connecting...", "connecting");
+    }
+
+    // Connect the device
+    connectToDevice(serial);
+}
+
+bool FarmViewer::isDeviceConnected(const QString& serial) const
+{
+    return m_connectedDevices.contains(serial);
+}
+
+void FarmViewer::disconnectDevice(const QString& serial)
+{
+    qDebug() << "FarmViewer: Disconnecting device:" << serial;
+
+    // Get the device from IDeviceManage
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (device) {
+        // Deregister observer if registered
+        if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+            device->deRegisterDeviceObserver(m_deviceForms[serial]);
+        }
+
+        // Disconnect the device
+        qsc::IDeviceManage::getInstance().disconnectDevice(serial);
+    }
+
+    // Update state tracking
+    m_connectedDevices.remove(serial);
+    if (m_activeConnections > 0) {
+        m_activeConnections--;
+    }
+
+    // Update placeholder to show "Ready to Connect"
+    if (m_deviceForms.contains(serial) && !m_deviceForms[serial].isNull()) {
+        m_deviceForms[serial]->updatePlaceholderStatus("Ready to Connect", "disconnected");
+
+        // Make sure placeholder is visible again
+        auto videoForm = m_deviceForms[serial];
+        if (videoForm && videoForm->findChild<QWidget*>("placeholderWidget")) {
+            QWidget* placeholder = videoForm->findChild<QWidget*>("placeholderWidget");
+            if (placeholder) {
+                placeholder->show();
+                placeholder->raise();
+            }
+        }
+    }
+
+    // Release connection from pool
+    qsc::DeviceConnectionPool::instance().releaseConnection(serial);
+
+    qDebug() << "FarmViewer: Device disconnected successfully:" << serial
+             << "Active connections:" << m_activeConnections;
 }
 
 void FarmViewer::onConnectionBatchStarted(int totalDevices)

@@ -1,5 +1,37 @@
 {
-  description = "QtScrcpy - Enterprise-grade Qt-based Android device mirroring and farm management system";
+  description = "Phone Farm Manager - Enterprise-grade Qt-based Android device mirroring and farm management system";
+
+  # HOW TO USE THIS FLAKE
+  # ====================
+  #
+  # 1. INITIAL SETUP:
+  #    git clone <repository> phone-farm-manager && cd phone-farm-manager
+  #    nix develop                    # Enter development environment (minimal, fast)
+  #
+  # 2. BUILD THE APPLICATION:
+  #    build_release                  # Build optimized release version
+  #    # Output will be in: output/x64/RelWithDebInfo/QtScrcpy
+  #
+  # 3. START THE TOOL:
+  #    run_qtscrcpy                   # Launch GUI for single device
+  #    run_qtscrcpy_farm              # Launch multi-device farm mode (auto-detects all connected devices)
+  #    run_qtscrcpy_device 192.168.1.100:5555  # Connect to specific device
+  #
+  # 4. SPECIALIZED ENVIRONMENTS:
+  #    nix develop .#qt               # Qt6 development environment
+  #    nix develop .#android          # Android SDK/NDK tools
+  #    nix develop .#full             # Complete environment (slower startup)
+  #
+  # 5. PRODUCTION INSTALL:
+  #    nix build                      # Build package
+  #    nix run                        # Run directly from flake
+  #    nix profile install .          # Install to user profile
+  #
+  # 6. NIXOS SERVICE (optional):
+  #    Add to configuration.nix:
+  #      services.qtscrcpy.enable = true;
+  #
+  # For more details, see README.md
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -183,29 +215,31 @@
         # DEFAULT SHELL - Minimal, fast loading (< 5 seconds)
         defaultShell = pkgs.mkShell {
           name = "qtscrcpy-minimal";
-          buildInputs = coreTools ++ buildTools;
-          nativeBuildInputs = [ pkgs.bashInteractive ];
-          
+          buildInputs = coreTools ++ buildTools ++ qt6Full ++ qtSystemLibs ++ [ pkgs.ffmpeg_7.dev pkgs.ffmpeg_7.lib ];
+          nativeBuildInputs = [ pkgs.qt6.wrapQtAppsHook pkgs.makeWrapper ];
+
           shellHook = ''
-            echo "⚡ QtScrcpy Minimal Development Environment"
+            echo "⚡ QtScrcpy Development Environment - Ready to Use!"
             echo "=========================================="
-            echo "Loading time: ~3-5 seconds"
             echo ""
-            echo "🚀 Switch to specialized environments:"
-            echo "  echo 'qt' > .qtscrcpy-env && direnv reload      # Qt6 development"
-            echo "  echo 'android' > .qtscrcpy-env && direnv reload # Android tools"
-            echo "  echo 'full' > .qtscrcpy-env && direnv reload    # Complete environment"
+            echo "🚀 QUICK START:"
+            echo "  1. Build:  build_release"
+            echo "  2. Start:  run_qtscrcpy        # Single device mode"
+            echo "            run_qtscrcpy_farm   # Multi-device farm mode"
             echo ""
-            echo "⚡ Or use direct nix develop commands:"
-            echo "  nix develop .#qt      # Qt6 development shell"
-            echo "  nix develop .#android # Android tools shell"  
-            echo "  nix develop .#full    # Complete environment shell"
+            echo "📱 Device commands:"
+            echo "  list_devices                   # List connected devices"
+            echo "  kill_qtscrcpy                  # Stop all instances"
             echo "=========================================="
             ${commonEnvVars}
+            ${graphicsEnvVars}
             ${adbSymlinkFixer}
-            
-            # Initialize basic project structure
-            mkdir -p build/{debug,release,test} logs data/{db,cache,uploads}
+            ${farmFunctionsLoader}
+
+            init_dev_structure
+            init_adb
+
+            echo "✅ Ready to go! Run 'run_qtscrcpy_farm' to start."
           '';
         };
 
@@ -227,17 +261,24 @@
             ${farmFunctionsLoader}
             
             init_dev_structure
-            
-            echo "📚 Qt Development commands available:"
-            echo "  source scripts/farm-functions.sh  # Load farm functions manually if needed"
+
+            echo "🚀 HOW TO START Phone Farm Manager:"
+            echo "  run_qtscrcpy                       # Launch single device GUI"
+            echo "  run_qtscrcpy_farm                  # Launch multi-device farm mode"
+            echo "  run_qtscrcpy_device 192.168.1.100:5555  # Connect to specific device"
+            echo ""
+            echo "🔨 Build commands:"
             echo "  build_debug                        # Build debug version"
             echo "  build_release                      # Build release version"
             echo "  clean_build                        # Clean build artifacts"
             echo ""
+            echo "📱 Device commands:"
+            echo "  list_devices                       # List connected devices"
+            echo "  kill_qtscrcpy                      # Stop all instances"
+            echo ""
             echo "🔄 Switch environments:"
-            echo "  echo 'android' > .qtscrcpy-env && direnv reload  # Switch to Android tools"
-            echo "  echo 'full' > .qtscrcpy-env && direnv reload     # Switch to complete environment"
-            echo "  echo 'default' > .qtscrcpy-env && direnv reload  # Back to minimal"
+            echo "  nix develop .#android              # Switch to Android tools"
+            echo "  nix develop .#full                 # Switch to complete environment"
             echo ""
             echo "🎯 Ready for Qt6 development!"
           '';
@@ -268,17 +309,23 @@
             ${farmFunctionsLoader}
             init_dev_structure
             init_adb
-            
-            echo "📚 Android commands available:"
-            echo "  source scripts/farm-functions.sh  # Load farm functions manually if needed"
+
+            echo "🚀 HOW TO START Phone Farm Manager:"
+            echo "  run_qtscrcpy                       # Launch single device GUI"
+            echo "  run_qtscrcpy_farm                  # Launch multi-device farm mode"
+            echo "  run_qtscrcpy_device <ip:port>      # Connect to specific device"
+            echo ""
+            echo "📱 Device management:"
             echo "  list_devices                       # List connected devices"
             echo "  adb devices                        # ADB device list"
             echo "  init_adb                           # Start ADB server"
             echo ""
+            echo "🔧 Build commands:"
+            echo "  build_release                      # Build release version"
+            echo ""
             echo "🔄 Switch environments:"
-            echo "  echo 'qt' > .qtscrcpy-env && direnv reload       # Switch to Qt6 development"
-            echo "  echo 'full' > .qtscrcpy-env && direnv reload     # Switch to complete environment"
-            echo "  echo 'default' > .qtscrcpy-env && direnv reload  # Back to minimal"
+            echo "  nix develop .#qt                   # Switch to Qt6 development"
+            echo "  nix develop .#full                 # Switch to complete environment"
             echo ""
             echo "🎯 Ready for Android development!"
           '';

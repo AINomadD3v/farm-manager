@@ -79,6 +79,8 @@ set(QSC_DEVICE_SOURCES
     src/device/device.h
     src/device/device.cpp
     src/device/compat.h
+    src/device/deviceconnectionpool.h
+    src/device/deviceconnectionpool.cpp
     src/device/android/input.h
     src/device/android/keycodes.h
     src/device/controller/controller.h

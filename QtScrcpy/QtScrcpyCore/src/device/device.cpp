@@ -15,18 +15,50 @@ namespace qsc {
 
 Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params(params)
 {
+    qInfo() << "========================================";
+    qInfo() << "Device::Device() CONSTRUCTOR START";
+    qInfo() << "  Serial:" << params.serial;
+    qInfo() << "  Display:" << params.display;
+    qInfo() << "  RecordFile:" << params.recordFile;
+    qInfo() << "========================================";
+
     if (!params.display && !m_params.recordFile) {
         qCritical("not display must be recorded");
         return;
     }
 
     if (params.display) {
+        qInfo() << "Device: Creating Decoder...";
         m_decoder = new Decoder([this](int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV) {
+            // Log first frame only to avoid spam
+            static bool firstFrameDecoded = true;
+            if (firstFrameDecoded) {
+                qInfo() << "========================================";
+                qInfo() << "Device: Decoder callback - FIRST FRAME DECODED!";
+                qInfo() << "  Serial:" << m_params.serial;
+                qInfo() << "  Frame size:" << width << "x" << height;
+                qInfo() << "  Observer count:" << m_deviceObservers.size();
+                qInfo() << "========================================";
+                firstFrameDecoded = false;
+            }
+
+            if (m_deviceObservers.empty()) {
+                qWarning() << "Device: No observers registered for video frames (serial:" << m_params.serial << ")";
+                return;
+            }
+
+            // Dispatch frame to all observers
             for (const auto& item : m_deviceObservers) {
                 item->onFrame(width, height, dataY, dataU, dataV, linesizeY, linesizeU, linesizeV);
             }
         }, this);
+        qInfo() << "Device: Decoder created successfully";
+
+        qInfo() << "Device: Creating FileHandler...";
         m_fileHandler = new FileHandler(this);
+        qInfo() << "Device: FileHandler created successfully";
+
+        qInfo() << "Device: Creating Controller...";
         m_controller = new Controller([this](const QByteArray& buffer) -> qint64 {
             if (!m_server || !m_server->getControlSocket()) {
                 return 0;
@@ -34,12 +66,19 @@ Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params
 
             return m_server->getControlSocket()->write(buffer.data(), buffer.length());
         }, params.gameScript, this);
+        qInfo() << "Device: Controller created successfully";
     }
 
+    qInfo() << "Device: Creating Demuxer...";
     m_stream = new Demuxer(this);
+    qInfo() << "Device: Demuxer created successfully";
 
+    qInfo() << "Device: Creating Server...";
     m_server = new Server(this);
+    qInfo() << "Device: Server created successfully:" << m_server;
+
     if (m_params.recordFile && !m_params.recordPath.trimmed().isEmpty()) {
+        qInfo() << "Device: Setting up recording...";
         QString absFilePath;
         QString fileDir(m_params.recordPath);
         if (!fileDir.isEmpty()) {
@@ -57,9 +96,19 @@ Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params
             }
             absFilePath = dir.absoluteFilePath(fileName);
         }
+        qInfo() << "Device: Creating Recorder...";
         m_recorder = new Recorder(absFilePath, this);
+        qInfo() << "Device: Recorder created successfully";
     }
+
+    qInfo() << "Device: Calling initSignals()...";
     initSignals();
+    qInfo() << "Device: initSignals() completed";
+
+    qInfo() << "========================================";
+    qInfo() << "Device::Device() CONSTRUCTOR COMPLETE";
+    qInfo() << "  Serial:" << params.serial;
+    qInfo() << "========================================";
 }
 
 Device::~Device()
@@ -79,7 +128,18 @@ void *Device::getUserData()
 
 void Device::registerDeviceObserver(DeviceObserver *observer)
 {
+    qInfo() << "========================================";
+    qInfo() << "Device::registerDeviceObserver() called";
+    qInfo() << "  Serial:" << m_params.serial;
+    qInfo() << "  Observer pointer:" << observer;
+    qInfo() << "  Total observers before insert:" << m_deviceObservers.size();
+    qInfo() << "========================================";
+
     m_deviceObservers.insert(observer);
+
+    qInfo() << "Device: Observer registered successfully";
+    qInfo() << "  Total observers after insert:" << m_deviceObservers.size();
+    qInfo() << "========================================";
 }
 
 void Device::deRegisterDeviceObserver(DeviceObserver *observer)
@@ -169,9 +229,22 @@ void Device::initSignals()
 
     if (m_server) {
         connect(m_server, &Server::serverStarted, this, [this](bool success, const QString &deviceName, const QSize &size) {
+            qInfo() << "========================================";
+            qInfo() << "Device: serverStarted signal received from Server";
+            qInfo() << "  Serial:" << m_params.serial;
+            qInfo() << "  Success:" << success;
+            qInfo() << "  DeviceName:" << deviceName;
+            qInfo() << "  Size:" << size;
+            qInfo() << "========================================";
+
             m_serverStartSuccess = success;
+
+            qInfo() << "Device: Emitting deviceConnected signal to DeviceManage...";
             emit deviceConnected(success, m_params.serial, deviceName, size);
+            qInfo() << "Device: deviceConnected signal emitted";
+
             if (success) {
+                qInfo() << "Device: Server started successfully, initializing decoders and stream...";
                 double diff = m_startTimeCount.elapsed() / 1000.0;
                 qInfo() << QString("server start finish in %1s").arg(diff).toStdString().c_str();
 
@@ -262,12 +335,27 @@ void Device::initSignals()
 
 bool Device::connectDevice()
 {
-    if (!m_server || m_serverStartSuccess) {
+    qInfo() << "========================================";
+    qInfo() << "Device::connectDevice() START:" << m_params.serial;
+    qInfo() << "========================================";
+
+    if (!m_server) {
+        qWarning() << "Device: m_server is null, cannot connect";
         return false;
     }
 
+    if (m_serverStartSuccess) {
+        qWarning() << "Device: Server already started successfully";
+        return false;
+    }
+
+    qInfo() << "Device: Pre-flight checks passed, scheduling server start via QTimer...";
+
     // fix: macos cant recv finished signel, timer is ok
     QTimer::singleShot(0, this, [this]() {
+        qInfo() << "========================================";
+        qInfo() << "Device: QTimer callback - Starting server for:" << m_params.serial;
+        qInfo() << "========================================";
         m_startTimeCount.start();
         // max size support 480p 720p 1080p 设备原生分辨率
         // support wireless connect, example:
@@ -294,9 +382,23 @@ bool Device::connectDevice()
 
         params.crop = "";
         params.control = true;
+
+        qInfo() << "Device: Calling m_server->start()...";
+        qInfo() << "  Serial:" << params.serial;
+        qInfo() << "  LocalPort:" << params.localPort;
+        qInfo() << "  MaxSize:" << params.maxSize;
+        qInfo() << "  BitRate:" << params.bitRate;
+        qInfo() << "  MaxFps:" << params.maxFps;
+        qInfo() << "  UseReverse:" << params.useReverse;
+
         m_server->start(params);
+
+        qInfo() << "Device: m_server->start() called, waiting for serverStarted signal...";
+        qInfo() << "========================================";
     });
 
+    qInfo() << "Device::connectDevice() returning true (async start scheduled)";
+    qInfo() << "========================================";
     return true;
 }
 

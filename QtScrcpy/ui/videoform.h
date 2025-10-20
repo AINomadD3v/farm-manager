@@ -33,6 +33,10 @@ public:
     void showFPS(bool show);
     void switchFullScreen();
     bool isHost();
+    void updatePlaceholderStatus(const QString& status, const QString& backgroundColor = "");
+
+signals:
+    void deviceClicked(QString serial);
 
 private:
     void onFrame(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
@@ -43,6 +47,7 @@ private:
     void updateStyleSheet(bool vertical);
     QMargins getMargins(bool vertical);
     void initUI();
+    void createVideoWidget();
 
     void showToolForm(bool show = true);
     void moveCenter();

@@ -80,22 +80,28 @@ Phone Farm Manager is designed specifically for NixOS environments with comprehe
 - **16GB+ RAM** for multi-device operations
 - **Android devices** for testing (3+ recommended)
 
-### Quick Start
+### Quick Start (Super Simple!)
 
 ```bash
-# Clone the repository
-git clone <repository-url> phone-farm-manager
+# 1. Enter the project directory
 cd phone-farm-manager
 
-# Enter development environment (loads all dependencies)
-nix develop
+# 2. That's it! The environment auto-loads with direnv
+#    If not, just run: direnv allow
 
-# Build the application
+# 3. Build the application (first time only)
 build_release
 
-# Launch Phone Farm Manager
-run_qtscrcpy
+# 4. Start the Phone Farm Manager
+run_qtscrcpy_farm
+
+# 5. In the QtScrcpy window that opens:
+#    - Click the "Farm Viewer" button in the toolbar
+#    - All your connected devices will appear in a grid
+#    - Select and control multiple devices at once!
 ```
+
+**That's all!** The app opens once, then you use the Farm Viewer inside it to see all your devices in a single window.
 
 ### Nix Flake Installation
 
@@ -113,22 +119,26 @@ nix profile install github:user/phone-farm-manager
 }
 ```
 
-### Development Shells
+### Development Environment
 
-The flake provides specialized development environments:
+The default environment includes everything you need:
+- Qt6 development tools
+- Android SDK and ADB
+- Build tools (CMake, Ninja, GCC)
+- All farm management functions
+
+No need to switch between different environments! Just enter the project directory and start working.
 
 ```bash
-# Minimal development (fast startup)
-nix develop
+# The default environment has everything
+cd phone-farm-manager
+# Environment auto-loads via direnv
 
-# Qt6-focused development
-nix develop .#qt
-
-# Android development tools
-nix develop .#android  
-
-# Complete environment (all tools)
-nix develop .#full
+# All commands are ready:
+build_release        # Build the project
+run_qtscrcpy_farm   # Run multi-device mode
+list_devices        # Show connected devices
+kill_qtscrcpy       # Stop all instances
 ```
 
 ### NixOS Service Module

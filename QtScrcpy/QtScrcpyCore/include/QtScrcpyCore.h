@@ -135,6 +135,7 @@ public:
     virtual bool disconnectDevice(const QString &serial) = 0;
     virtual void disconnectAllDevice() = 0;
     virtual QPointer<IDevice> getDevice(const QString& serial) = 0;
+    virtual QStringList getAllConnectedSerials() const = 0;
 
 signals:
     void deviceConnected(bool success, const QString& serial, const QString& deviceName, const QSize& size);

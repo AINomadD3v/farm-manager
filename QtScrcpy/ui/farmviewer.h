@@ -63,6 +63,9 @@ private slots:
     void onConnectionBatchProgress(int completed, int total, int failed);
     void onConnectionBatchCompleted(int successful, int failed);
 
+    // Click-to-connect slots
+    void onDeviceTileClicked(QString serial);
+
     // Unix signal handler slot (called via socket notifier)
     void handleUnixSignal();
 
@@ -81,9 +84,11 @@ private:
     void createDeviceContainer(const QString& serial, const QString& deviceName);
     QWidget* createDeviceWidget(const QString& serial, const QString& deviceName);
     void connectToDevice(const QString& serial);
+    void disconnectDevice(const QString& serial);
     void processDetectedDevices(const QStringList& devices);
     void processConnectionQueue();
     void onConnectionComplete(const QString& serial, bool success);
+    bool isDeviceConnected(const QString& serial) const;
 
     // Helper methods for grid calculation
     QSize getOptimalTileSize(int deviceCount, const QSize& windowSize) const;
@@ -111,6 +116,11 @@ private:
     // Device management
     QMap<QString, QPointer<VideoForm>> m_deviceForms;
     QMap<QString, QPointer<QWidget>> m_deviceContainers;
+
+    // Click-to-connect state tracking
+    QSet<QString> m_connectedDevices;  // Track which devices are currently connected
+    int m_activeConnections;           // Count of active streaming connections
+    static const int MAX_CONCURRENT_STREAMS = 1;  // REDUCED: Start with 1 device for safety testing
 
     // SIMPLIFIED: No connection queue or resource management in display-only mode
     QTimer* m_connectionThrottleTimer;  // Kept for compatibility (unused)

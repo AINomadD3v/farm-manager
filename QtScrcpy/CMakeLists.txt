@@ -181,8 +181,15 @@ set(QC_UI_SOURCES
     ui/dialog.ui
     ui/farmviewer.h
     ui/farmviewer.cpp
+    ui/farmviewerconfig.h
+    ui/deviceconnectiontask.h
+    ui/deviceconnectiontask.cpp
+    ui/performancemonitor.h
+    ui/performancemonitor.cpp
     render/qyuvopenglwidget.h
     render/qyuvopenglwidget.cpp
+    render/devicestreamwidget.h
+    render/devicestreamwidget.cpp
 )
 source_group(ui FILES ${QC_UI_SOURCES})
 

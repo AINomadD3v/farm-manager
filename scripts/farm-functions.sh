@@ -13,10 +13,21 @@ build_debug() {
 
 build_release() {
   echo "🔨 Building QtScrcpy in Release mode..."
-  cd build/release  
+
+  # Generate translation files if they don't exist
+  if [ ! -f "QtScrcpy/res/i18n/en_US.qm" ]; then
+    echo "📦 Generating translation files..."
+    cd QtScrcpy/res/i18n
+    lrelease en_US.ts zh_CN.ts ja_JP.ts 2>/dev/null || echo "⚠️  Translation generation skipped"
+    cd ../../..
+  fi
+
+  cd build/release
   cmake ../.. -DCMAKE_BUILD_TYPE=Release
   make -j$(nproc)
   cd ../..
+
+  echo "✅ Build complete! Binary at: ./output/x64/Release/QtScrcpy"
 }
 
 clean_build() {
@@ -25,6 +36,14 @@ clean_build() {
 }
 
 run_qtscrcpy() {
+  # Check if binary exists
+  local binary_path="./output/x64/Release/QtScrcpy"
+  if [ ! -f "$binary_path" ]; then
+    echo "❌ QtScrcpy binary not found at: $binary_path"
+    echo "💡 Please build first: build_release"
+    return 1
+  fi
+
   echo "🚀 Starting QtScrcpy with optimized graphics settings..."
   echo "📱 Connected devices:"
   adb devices
@@ -34,23 +53,31 @@ run_qtscrcpy() {
   QT_XCB_GL_INTEGRATION=xcb_glx \
   MESA_GL_VERSION_OVERRIDE=3.3 \
   MESA_GLSL_VERSION_OVERRIDE=330 \
-  ./output/x64/RelWithDebInfo/QtScrcpy "$@"
+  "$binary_path" "$@"
 }
 
 run_qtscrcpy_device() {
   local device_ip="$1"
+  local binary_path="./output/x64/Release/QtScrcpy"
+
   if [ -z "$device_ip" ]; then
     echo "❌ Usage: run_qtscrcpy_device <device_ip:port>"
     echo "📋 Example: run_qtscrcpy_device 192.168.40.101:5555"
     return 1
   fi
+
+  if [ ! -f "$binary_path" ]; then
+    echo "❌ QtScrcpy binary not found. Please build first: build_release"
+    return 1
+  fi
+
   echo "🚀 Starting QtScrcpy for device: $device_ip with desktop OpenGL..."
   # Force desktop OpenGL to fix shader precision issues
   QT_OPENGL=desktop \
   QT_XCB_GL_INTEGRATION=xcb_glx \
   MESA_GL_VERSION_OVERRIDE=3.3 \
   MESA_GLSL_VERSION_OVERRIDE=330 \
-  ./output/x64/RelWithDebInfo/QtScrcpy -s "$device_ip" --window-title "Phone Farm - $device_ip"
+  "$binary_path" -s "$device_ip" --window-title "Phone Farm - $device_ip"
 }
 
 kill_qtscrcpy() {
@@ -64,112 +91,105 @@ list_devices() {
 }
 
 run_qtscrcpy_farm() {
-  echo "🏭 Starting QtScrcpy Phone Farm - Multi-Device Mode"
-  echo "📱 Detecting connected devices..."
-  
-  # Get list of connected devices
-  local devices=($(adb devices | grep -E '\tdevice$' | cut -f1))
-  local device_count=${#devices[@]}
-  
-  if [ $device_count -eq 0 ]; then
-    echo "❌ No devices detected. Please ensure devices are connected and authorized."
-    echo "💡 Try: adb devices"
+  local binary_path="./output/x64/Release/QtScrcpy"
+
+  if [ ! -f "$binary_path" ]; then
+    echo "❌ QtScrcpy binary not found at: $binary_path"
+    echo "💡 Please build first: build_release"
     return 1
   fi
-  
-  echo "✅ Found $device_count device(s)"
-  
+
+  echo "🏭 Starting QtScrcpy Phone Farm Manager"
+  echo "📱 Detecting connected devices..."
+
+  # Get list of connected devices
+  local devices=($(adb devices | grep -v "List of devices" | awk '/device$/ {print $1}'))
+  local device_count=${#devices[@]}
+
+  if [ $device_count -eq 0 ]; then
+    echo "❌ No devices detected. Please ensure devices are connected and authorized."
+    echo "💡 Try: list_devices"
+    return 1
+  fi
+
+  echo "✅ Found $device_count device(s) connected"
+  echo ""
+  echo "🚀 Launching QtScrcpy Phone Farm Manager..."
+  echo ""
+  echo "📋 NEXT STEPS:"
+  echo "  1. QtScrcpy will open in a single window"
+  echo "  2. Click the 'Farm Viewer' button in the toolbar"
+  echo "  3. All $device_count devices will appear in a grid layout"
+  echo "  4. You can select and control multiple devices at once"
+  echo ""
+
   # Kill any existing instances
   kill_qtscrcpy
-  sleep 2
-  
-  # Launch QtScrcpy for each device with proper positioning
-  local x_pos=0
-  local y_pos=0
-  local window_width=350
-  local window_height=400
-  local columns=4  # Arrange in 4 columns
-  
-  for i in "${!devices[@]}"; do
-    local device="${devices[$i]}"
-    local device_num=$((i + 1))
-    local title="Farm Device $device_num - $device"
-    
-    # Calculate window position (grid layout)
-    local col=$((i % columns))
-    local row=$((i / columns))
-    x_pos=$((col * window_width))
-    y_pos=$((row * window_height))
-    
-    echo "🚀 Launching Device $device_num: $device at position ($x_pos, $y_pos)"
-    
-    # Launch with desktop OpenGL and positioning
-    QT_OPENGL=desktop \
-    QT_XCB_GL_INTEGRATION=xcb_glx \
-    MESA_GL_VERSION_OVERRIDE=3.3 \
-    MESA_GLSL_VERSION_OVERRIDE=330 \
-    ./output/x64/RelWithDebInfo/QtScrcpy \
-      -s "$device" \
-      --window-title "$title" \
-      --window-x "$x_pos" \
-      --window-y "$y_pos" \
-      --max-size 800 \
-      --bit-rate 4M \
-      --max-fps 30 \
-      --stay-awake &
-    
-    # Small delay to prevent resource conflicts
-    sleep 1.5
-  done
-  
-  echo "🎯 Farm Mode: Launched $device_count devices in grid layout"
-  echo "💡 Use 'kill_qtscrcpy' to stop all devices"
+  sleep 1
+
+  # Launch single QtScrcpy instance - it has built-in Farm Viewer
+  DISPLAY="${DISPLAY:-:0}" \
+  QT_OPENGL=desktop \
+  QT_XCB_GL_INTEGRATION=xcb_glx \
+  MESA_GL_VERSION_OVERRIDE=3.3 \
+  MESA_GLSL_VERSION_OVERRIDE=330 \
+  "$binary_path" &
+
+  echo "✅ QtScrcpy Phone Farm Manager started!"
+  echo "💡 Use 'kill_qtscrcpy' to stop the application"
 }
 
 run_qtscrcpy_custom() {
   local device_list="$1"
+  local binary_path="./output/x64/Release/QtScrcpy"
+
   if [ -z "$device_list" ]; then
     echo "❌ Usage: run_qtscrcpy_custom \"device1:port device2:port device3:port\""
     echo "📋 Example: run_qtscrcpy_custom \"192.168.40.101:5555 192.168.40.102:5555\""
     return 1
   fi
-  
+
+  if [ ! -f "$binary_path" ]; then
+    echo "❌ QtScrcpy binary not found. Please build first: build_release"
+    return 1
+  fi
+
   echo "🏭 Starting Custom Multi-Device Configuration"
-  
+
   # Kill any existing instances
   kill_qtscrcpy
   sleep 2
-  
+
   # Convert device list to array
   local devices=($device_list)
   local device_count=${#devices[@]}
-  
+
   echo "✅ Launching $device_count custom devices"
-  
+
   # Launch each device with custom positioning
   local x_pos=0
   local y_pos=0
   local window_width=350
   local window_height=400
-  
+
   for i in "${!devices[@]}"; do
     local device="${devices[$i]}"
     local device_num=$((i + 1))
     local title="Custom Device $device_num - $device"
-    
+
     # Calculate window position
     local col=$((i % 3))  # 3 columns for custom mode
     local row=$((i / 3))
     x_pos=$((col * window_width))
     y_pos=$((row * window_height))
-    
+
     echo "🚀 Launching Custom Device $device_num: $device"
-    
+
     QT_OPENGL=desktop \
     QT_XCB_GL_INTEGRATION=xcb_glx \
     MESA_GL_VERSION_OVERRIDE=3.3 \
     MESA_GLSL_VERSION_OVERRIDE=330 \
-    ./output/x64/RelWithDebInfo/QtScrcpy \
+    "$binary_path" \
       -s "$device" \
       --window-title "$title" \
       --window-x "$x_pos" \
@@ -178,10 +198,10 @@ run_qtscrcpy_custom() {
       --bit-rate 6M \
       --max-fps 60 \
       --stay-awake &
-    
+
     sleep 1.5
   done
-  
+
   echo "🎯 Custom Mode: Launched $device_count devices"
 }
 

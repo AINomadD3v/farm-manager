@@ -75,6 +75,13 @@ private slots:
 protected:
     void timerEvent(QTimerEvent *event);
 
+private slots:
+    void onVideoSocketReadyRead();
+    void onVideoSocketConnected();
+    void onControlSocketConnected();
+    void onVideoSocketError(QAbstractSocket::SocketError error);
+    void onControlSocketError(QAbstractSocket::SocketError error);
+
 private:
     bool pushServer();
     bool enableTunnelReverse();
@@ -85,6 +92,8 @@ private:
     bool connectTo();
     bool startServerByStep();
     bool readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size);
+    void startAsyncReadInfo(VideoSocket *videoSocket);
+    void startAsyncConnect();
     void startAcceptTimeoutTimer();
     void stopAcceptTimeoutTimer();
     void startConnectTimeoutTimer();
@@ -108,6 +117,13 @@ private:
     ServerParams m_params;
 
     SERVER_START_STEP m_serverStartStep = SSS_NULL;
+
+    // Async connection state
+    QPointer<VideoSocket> m_pendingVideoSocket = Q_NULLPTR;
+    QPointer<QTcpSocket> m_pendingControlSocket = Q_NULLPTR;
+    bool m_videoSocketReady = false;
+    bool m_controlSocketReady = false;
+    QByteArray m_readBuffer;
 };
 
 #endif // SERVER_H

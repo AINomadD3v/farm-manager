@@ -107,6 +107,7 @@ signals:
     void connectionReleased(const QString& serial);
     void connectionRemoved(const QString& serial);
     void connectionLimitReached();
+    void connectionFailed(const QString& serial);
     void memoryWarning(quint64 estimatedBytes);
 
 private slots:
