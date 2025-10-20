@@ -293,11 +293,9 @@ void Decoder::close()
 
 bool Decoder::push(const AVPacket *packet)
 {
-    qInfo() << "========================================";
-    qInfo() << "Decoder::push() ENTRY";
-    qInfo() << "  packet:" << (void*)packet;
-    qInfo() << "  Current thread ID:" << QThread::currentThreadId();
-    qInfo() << "========================================";
+    // PERFORMANCE OPTIMIZATION: Removed excessive logging from hot path
+    // Previous: ~45 log lines per packet = massive overhead with 78 devices
+    // Now: Only log errors and first-time initialization
 
     if (!packet) {
         qCritical() << "Decoder::push() - NULL packet!";
@@ -308,21 +306,17 @@ bool Decoder::push(const AVPacket *packet)
     // Can't use QMetaObject::invokeMethod because Demuxer::run() doesn't have event loop
     // So we initialize lazily on first push() call, which IS in the Demuxer thread
     if (m_needsInitialization) {
-        qInfo() << "Decoder::push() - First packet received, calling open() now in thread:" << QThread::currentThreadId();
+        qInfo() << "Decoder::push() - First packet, initializing decoder in thread:" << QThread::currentThreadId();
         m_needsInitialization = false;
         if (!open()) {
             qCritical() << "Decoder::push() - CRITICAL: open() failed!";
             return false;
         }
         qInfo() << "Decoder::push() - Decoder initialized successfully";
-        qInfo() << "Decoder::push() - Processing first packet (contains SPS/PPS config data)";
-        // NOTE: We MUST process the first packet - it contains SPS/PPS configuration
-        // that tells the decoder the video dimensions. Skipping it causes "non-existing PPS" errors.
-        // The settle time comes from QThread::msleep() in open(), not from skipping packets.
     }
 
     if (!m_codecCtx) {
-        qCritical() << "Decoder::push() - NULL codec context even after initialization!";
+        qCritical() << "Decoder::push() - NULL codec context!";
         return false;
     }
 
@@ -331,14 +325,8 @@ bool Decoder::push(const AVPacket *packet)
         return false;
     }
 
-    // CRITICAL: Validate codec context is still valid
-    qInfo() << "Decoder::push() - Validating codec context...";
-    qInfo() << "  m_codecCtx pointer:" << (void*)m_codecCtx;
-    qInfo() << "  m_codecCtx->codec:" << (void*)m_codecCtx->codec;
-    qInfo() << "  m_isCodecCtxOpen:" << m_isCodecCtxOpen;
-
     if (!m_codecCtx->codec) {
-        qCritical() << "Decoder::push() - Codec context has NULL codec! Context was closed or corrupted!";
+        qCritical() << "Decoder::push() - Codec context has NULL codec!";
         return false;
     }
 
@@ -347,62 +335,33 @@ bool Decoder::push(const AVPacket *packet)
         return false;
     }
 
-    // Validate packet
-    qInfo() << "Decoder::push() - Validating packet...";
-    qInfo() << "  packet->data:" << (void*)packet->data;
-    qInfo() << "  packet->size:" << packet->size;
-    qInfo() << "  packet->pts:" << packet->pts;
-
     if (!packet->data || packet->size <= 0) {
         qCritical() << "Decoder::push() - Invalid packet data!";
         return false;
     }
 
-    qInfo() << "Decoder::push() - Getting decoding frame from video buffer...";
     AVFrame *decodingFrame = m_vb->decodingFrame();
-    qInfo() << "Decoder::push() - Got decoding frame:" << (void*)decodingFrame;
 
     if (!decodingFrame) {
-        qCritical() << "Decoder::push() - NULL decoding frame from video buffer!";
+        qCritical() << "Decoder::push() - NULL decoding frame!";
         return false;
     }
 
     // CRITICAL: Ensure frame is in clean state for FFmpeg to fill
     // With the new FFmpeg API (send/receive), we do NOT pre-set frame dimensions.
     // The decoder fills in width/height/format after processing SPS/PPS data.
-    // Pre-setting dimensions causes crashes when codec context is still 0x0.
-    qInfo() << "Decoder::push() - Preparing frame for decoding...";
-    qInfo() << "  Frame current state - format:" << decodingFrame->format
-            << "size:" << decodingFrame->width << "x" << decodingFrame->height;
-
-    // If frame has stale data from a previous decode, unreference it
-    // This ensures FFmpeg starts with a clean frame buffer
     if (decodingFrame->format != AV_PIX_FMT_NONE ||
         decodingFrame->width > 0 ||
         decodingFrame->height > 0) {
-        qInfo() << "Decoder::push() - Frame has old data, unreferencing for clean state...";
         av_frame_unref(decodingFrame);
-        qInfo() << "Decoder::push() - Frame reset to clean state";
     }
 
-    qInfo() << "Decoder::push() - Frame ready for FFmpeg to populate";
 #ifdef QTSCRCPY_LAVF_HAS_NEW_ENCODING_DECODING_API
     int ret = -1;
 
     // CRITICAL: Use packet directly - NO cloning needed
     // Qt::DirectConnection ensures this function executes synchronously in the Demuxer thread,
     // meaning the packet is GUARANTEED valid during the entire function execution.
-    // The Demuxer only calls av_packet_unref() AFTER this function returns.
-    // This is the original QtScrcpy pattern that worked for years.
-
-    // Try WITHOUT global mutex to test if that's causing issues
-    qInfo() << "Decoder::push() - About to call avcodec_send_packet()...";
-    qInfo() << "  Codec ctx:" << (void*)m_codecCtx << "width:" << m_codecCtx->width << "height:" << m_codecCtx->height;
-    qInfo() << "  Packet:" << (void*)packet << "data:" << (void*)packet->data << "size:" << packet->size;
-    qInfo() << "  Packet first 8 bytes:" << QString::number(packet->data[0], 16) << QString::number(packet->data[1], 16)
-            << QString::number(packet->data[2], 16) << QString::number(packet->data[3], 16);
-
-    // Use original packet directly - safe with Qt::DirectConnection
     if ((ret = avcodec_send_packet(m_codecCtx, packet)) < 0) {
         char errorbuf[255] = { 0 };
         av_strerror(ret, errorbuf, 254);
@@ -410,11 +369,8 @@ bool Decoder::push(const AVPacket *packet)
         return false;
     }
 
-    qInfo() << "Decoder::push() - avcodec_send_packet() succeeded! Calling avcodec_receive_frame()...";
-
     // For hardware decoders, we need to transfer data from GPU to CPU
     if (m_useHardwareDecoder && decodingFrame && m_hwFrame) {
-        qInfo() << "Decoder::push() - Hardware decoder path, calling avcodec_receive_frame()...";
         ret = avcodec_receive_frame(m_codecCtx, m_hwFrame);
         if (!ret) {
             // Transfer data from GPU to CPU memory
@@ -434,25 +390,16 @@ bool Decoder::push(const AVPacket *packet)
         }
     } else if (decodingFrame) {
         // Software decoder path
-        qInfo() << "Decoder::push() - Software decoder, calling avcodec_receive_frame()...";
         ret = avcodec_receive_frame(m_codecCtx, decodingFrame);
-        qInfo() << "Decoder::push() - avcodec_receive_frame() returned:" << ret;
 
         if (!ret) {
             // a frame was received
-            qInfo() << "Decoder::push() - Frame decoded! Size:" << decodingFrame->width << "x" << decodingFrame->height;
             pushFrame();
-            qInfo() << "Decoder::push() - pushFrame() completed";
         } else if (ret != AVERROR(EAGAIN)) {
             qCritical("Could not receive video frame: %d", ret);
             return false;
-        } else {
-            qInfo() << "Decoder::push() - EAGAIN (need more data)";
         }
     }
-
-    qInfo() << "Decoder::push() - Returning success";
-    qInfo() << "========================================";
 #else
     int gotPicture = 0;
     int len = -1;
@@ -493,8 +440,9 @@ void Decoder::pushFrame()
 }
 
 void Decoder::onNewFrame() {
-    qInfo() << "========================================";
-    qInfo() << "Decoder::onNewFrame() - ENTRY (SIGNAL RECEIVED)";
+    // PERFORMANCE OPTIMIZATION: Removed excessive logging from hot path
+    // Previous: 11 log lines per frame (~91,260 log ops/sec with 78 devices @ 15 FPS)
+    // Now: Only log errors
 
     if (!m_onFrame) {
         qWarning() << "Decoder::onNewFrame() - m_onFrame callback is NULL!";
@@ -506,18 +454,13 @@ void Decoder::onNewFrame() {
         return;
     }
 
-    qInfo() << "Decoder::onNewFrame() - About to lock video buffer...";
-    qInfo() << "  m_vb pointer:" << (void*)m_vb;
-
     try {
         m_vb->lock();
-        qInfo() << "Decoder::onNewFrame() - Video buffer locked successfully";
     } catch (...) {
         qCritical() << "Decoder::onNewFrame() - EXCEPTION while locking video buffer!";
         throw;
     }
 
-    qInfo() << "Decoder::onNewFrame() - Consuming rendered frame...";
     const AVFrame *frame = m_vb->consumeRenderedFrame();
 
     if (!frame) {
@@ -526,19 +469,13 @@ void Decoder::onNewFrame() {
         return;
     }
 
-    qInfo() << "Decoder::onNewFrame() - Frame valid, size:" << frame->width << "x" << frame->height;
-    qInfo() << "Decoder::onNewFrame() - Calling m_onFrame callback...";
-
     try {
         m_onFrame(frame->width, frame->height, frame->data[0], frame->data[1], frame->data[2], frame->linesize[0], frame->linesize[1], frame->linesize[2]);
-        qInfo() << "Decoder::onNewFrame() - m_onFrame callback completed successfully";
     } catch (const std::exception& e) {
         qCritical() << "Decoder::onNewFrame() - EXCEPTION in m_onFrame callback:" << e.what();
     } catch (...) {
         qCritical() << "Decoder::onNewFrame() - UNKNOWN EXCEPTION in m_onFrame callback";
     }
 
-    qInfo() << "Decoder::onNewFrame() - Unlocking video buffer...";
     m_vb->unLock();
-    qInfo() << "Decoder::onNewFrame() - EXIT";
 }

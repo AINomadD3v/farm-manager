@@ -1,36 +1,5 @@
 /home/phone-node/tools/farm-manager/QtScrcpy/build/QtScrcpyCore/QtScrcpyCore_autogen/V6TAWOZAWB/moc_recorder.cpp: /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/device/recorder/recorder.h \
   /home/phone-node/tools/farm-manager/QtScrcpy/build/QtScrcpyCore/QtScrcpyCore_autogen/moc_predefs.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/avcodec.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/bsf.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/codec.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/codec_desc.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/codec_id.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/codec_par.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/packet.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavcodec/version.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavformat/avformat.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavformat/avio.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavformat/version.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/attributes.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/avconfig.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/avutil.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/buffer.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/channel_layout.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/common.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/cpu.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/dict.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/error.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/frame.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/hwcontext.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/intfloat.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/log.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/macros.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/mathematics.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/mem.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/pixfmt.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/rational.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/samplefmt.h \
-  /home/phone-node/tools/farm-manager/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/include/libavutil/version.h \
   /nix/store/0zv32kh0zb4s1v4ld6mc99vmzydj9nm9-glibc-2.40-66-dev/include/assert.h \
   /nix/store/0zv32kh0zb4s1v4ld6mc99vmzydj9nm9-glibc-2.40-66-dev/include/bits/atomic_wide_counter.h \
   /nix/store/0zv32kh0zb4s1v4ld6mc99vmzydj9nm9-glibc-2.40-66-dev/include/bits/cpu-set.h \
@@ -228,6 +197,35 @@
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qwaitcondition.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qxptype_traits.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qyieldcpu.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/codec.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/codec_id.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/codec_par.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/defs.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/packet.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavcodec/version_major.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavformat/avformat.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavformat/avio.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavformat/version.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavformat/version_major.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/attributes.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/avconfig.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/avutil.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/buffer.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/channel_layout.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/common.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/dict.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/error.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/frame.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/hwcontext.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/intfloat.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/log.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/macros.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/mathematics.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/mem.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/pixfmt.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/rational.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/samplefmt.h \
+  /nix/store/h27rbqihcx3avnl187fzl3f77sfqnmgj-ffmpeg-7.1.1-dev/include/libavutil/version.h \
   /nix/store/k6gpflj398qaxzx4bmqhnnj4l328vabk-gcc-14.3.0/include/c++/14.3.0/algorithm \
   /nix/store/k6gpflj398qaxzx4bmqhnnj4l328vabk-gcc-14.3.0/include/c++/14.3.0/array \
   /nix/store/k6gpflj398qaxzx4bmqhnnj4l328vabk-gcc-14.3.0/include/c++/14.3.0/atomic \

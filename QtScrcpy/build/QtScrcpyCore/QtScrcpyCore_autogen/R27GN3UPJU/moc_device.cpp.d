@@ -79,6 +79,7 @@
   /nix/store/0zv32kh0zb4s1v4ld6mc99vmzydj9nm9-glibc-2.40-66-dev/include/wchar.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QElapsedTimer \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QList \
+  /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QMutex \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QObject \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QPointer \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/QRect \
@@ -158,6 +159,7 @@
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qmetacontainer.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qmetatype.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qminmax.h \
+  /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qmutex.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qnamespace.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qnativeinterface.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qnumeric.h \
@@ -212,6 +214,7 @@
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qtnoop.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qtpreprocessorsupport.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qtresource.h \
+  /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qtsan_impl.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qttranslation.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qttypetraits.h \
   /nix/store/8bz54yy1s5mdvl941hrlhaarak9hqafm-qtbase-6.9.2/include/QtCore/qtversion.h \
