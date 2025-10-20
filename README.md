@@ -119,6 +119,27 @@ nix profile install github:user/phone-farm-manager
 }
 ```
 
+### NixOS System Installation (After Building)
+
+Once you've built the application, install it system-wide on NixOS:
+
+```bash
+# Quick installation (recommended)
+./install-nixos.sh
+
+# Then run from anywhere
+~/.local/bin/qtscrcpy-farm
+
+# Or enable auto-start service
+systemctl --user enable qtscrcpy-farm
+systemctl --user start qtscrcpy-farm
+```
+
+For detailed NixOS installation instructions, see:
+- **[QUICKSTART-NIXOS.md](QUICKSTART-NIXOS.md)** - Quick reference (2 commands to install)
+- **[INSTALL-NIXOS.md](INSTALL-NIXOS.md)** - Complete NixOS installation guide
+- **[home-manager-module.nix](home-manager-module.nix)** - Declarative home-manager integration
+
 ### Development Environment
 
 The default environment includes everything you need:

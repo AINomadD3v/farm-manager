@@ -86,25 +86,31 @@ void VideoForm::initUI()
         }
     )");
 
-    // Create simple footer label for device info
-    m_footerLabel = new QLabel(ui->keepRatioWidget);
-    m_footerLabel->setStyleSheet(R"(
-        QLabel {
-            background-color: rgba(0, 0, 0, 180);
-            color: #dfe6e9;
-            border: none;
-            padding: 5px;
-            font-size: 10px;
-        }
-    )");
-    m_footerLabel->setAlignment(Qt::AlignCenter);
-    m_footerLabel->setText("Device");
-    m_footerLabel->setGeometry(0, ui->keepRatioWidget->height() - 30, ui->keepRatioWidget->width(), 30);
-    // CRITICAL: Allow mouse events to pass through to video widget below
-    m_footerLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    // UI FIX: Only create footer label when in standalone mode (with skin or toolbar)
+    // In farm viewer mode (no skin, no toolbar), the container handles the label
+    if (m_skin || show_toolbar) {
+        m_footerLabel = new QLabel(ui->keepRatioWidget);
+        m_footerLabel->setStyleSheet(R"(
+            QLabel {
+                background-color: rgba(0, 0, 0, 180);
+                color: #dfe6e9;
+                border: none;
+                padding: 5px;
+                font-size: 10px;
+            }
+        )");
+        m_footerLabel->setAlignment(Qt::AlignCenter);
+        m_footerLabel->setText("Device");
+        m_footerLabel->setGeometry(0, ui->keepRatioWidget->height() - 30, ui->keepRatioWidget->width(), 30);
+        // CRITICAL: Allow mouse events to pass through to video widget below
+        m_footerLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
-    // Install event filter to handle resizing
-    ui->keepRatioWidget->installEventFilter(this);
+        // Install event filter to handle resizing
+        ui->keepRatioWidget->installEventFilter(this);
+    } else {
+        // Farm viewer mode - no internal footer label
+        m_footerLabel = nullptr;
+    }
 
     // Set cursor to pointing hand for clickable tiles
     setCursor(Qt::PointingHandCursor);

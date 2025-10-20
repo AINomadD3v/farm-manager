@@ -1,0 +1,25 @@
+[Unit]
+Description=QtScrcpy Phone Farm Manager
+Documentation=https://github.com/AINomadD3v/farm-manager
+After=graphical.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/qtscrcpy-farm
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=DISPLAY=:0
+Environment=QT_QPA_PLATFORM=xcb
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+# Security (optional hardening)
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

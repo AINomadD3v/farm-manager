@@ -278,21 +278,28 @@ void FarmViewer::setupUI()
     m_toolbarLayout->addStretch();
     m_toolbarLayout->addWidget(m_statusLabel);
     
-    // Scroll area for device grid
+    // UI IMPROVEMENT: Scroll area for device grid with better styling
     m_scrollArea = new QScrollArea();
-    m_scrollArea->setWidgetResizable(true);
+    m_scrollArea->setWidgetResizable(false); // CRITICAL: false for proper scrolling with fixed-size widgets
     m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    
+    m_scrollArea->setStyleSheet(
+        "QScrollArea {"
+        "  background-color: #f5f5f5;"
+        "  border: 1px solid #cccccc;"
+        "}"
+    );
+
     // Grid widget
     m_gridWidget = new QWidget();
+    m_gridWidget->setStyleSheet("background-color: #f5f5f5;");
     m_gridLayout = new QGridLayout(m_gridWidget);
-    m_gridLayout->setContentsMargins(5, 5, 5, 5); // Reduced margins
-    m_gridLayout->setSpacing(5); // Reduced spacing for tighter grid
-    // Make all columns and rows expand equally
-    m_gridLayout->setColumnStretch(0, 1);
-    m_gridLayout->setRowStretch(0, 1);
-    
+    m_gridLayout->setContentsMargins(10, 10, 10, 10); // Better outer margins
+    m_gridLayout->setSpacing(12); // Better spacing between device containers
+    // UI IMPROVEMENT: Remove column/row stretch for proper scrolling
+    // Let widgets determine their own size, scroll area will handle overflow
+    m_gridLayout->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+
     m_scrollArea->setWidget(m_gridWidget);
     
     // Add to main layout
@@ -320,17 +327,20 @@ void FarmViewer::addDevice(const QString& serial, const QString& deviceName, con
     // Create VideoForm for this device with dynamic sizing
     auto videoForm = new VideoForm(true, false, false, this); // frameless, no skin, no toolbar
     videoForm->setSerial(serial);
-    // Allow VideoForm to expand freely within grid cell
-    videoForm->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    videoForm->setMinimumSize(tileSize * 0.8); // Minimum size to prevent too small
+    // UI IMPROVEMENT: Fixed size policy to match container for proper grid layout
+    videoForm->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    // Set exact size based on tile size, accounting for container margins and label
+    int videoWidth = tileSize.width() - 16; // Account for container margins (8px each side)
+    int videoHeight = tileSize.height() - 55; // Account for label height (35px) + margins + spacing
+    videoForm->setFixedSize(videoWidth, videoHeight);
 
     // Create container widget with device label
     QWidget* container = createDeviceWidget(serial, deviceName);
 
-    // Add VideoForm to container with high stretch factor so it takes most space
+    // Add VideoForm to container
     QVBoxLayout* containerLayout = qobject_cast<QVBoxLayout*>(container->layout());
     if (containerLayout) {
-        containerLayout->insertWidget(0, videoForm, 10); // Insert before label, with high stretch
+        containerLayout->insertWidget(0, videoForm, 0); // Insert before label, no stretch (fixed size)
     }
 
     // Store references
@@ -395,25 +405,50 @@ void FarmViewer::removeDevice(const QString& serial)
 
 QWidget* FarmViewer::createDeviceWidget(const QString& serial, const QString& deviceName)
 {
+    Q_UNUSED(deviceName); // Device name not displayed in minimal UI
+
     // Calculate dynamic tile size based on current device count
     int currentDeviceCount = m_deviceForms.size() + 1; // +1 for the device being added
     QSize tileSize = getOptimalTileSize(currentDeviceCount, size());
 
     QWidget* container = new QWidget();
-    container->setMinimumSize(tileSize * 0.8); // Smaller minimum to allow better grid packing
-    container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // UI IMPROVEMENT: Set fixed size for proper scrolling and clean grid layout
+    container->setFixedSize(tileSize);
+    container->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    // UI IMPROVEMENT: Add clear visual container with border and shadow
+    container->setStyleSheet(
+        "QWidget {"
+        "  background-color: #ffffff;"
+        "  border: 2px solid #d0d0d0;"
+        "  border-radius: 8px;"
+        "}"
+        "QWidget:hover {"
+        "  border: 2px solid #0a84ff;"
+        "  background-color: #f8f9fa;"
+        "}"
+    );
 
     QVBoxLayout* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(2, 2, 2, 2); // Reduced margins for tighter grid
-    layout->setSpacing(2); // Reduced spacing
+    layout->setContentsMargins(8, 8, 8, 8); // Better margins for visual separation
+    layout->setSpacing(6); // Better spacing between video and label
 
     // Device info label - scale font based on tile size
     int fontSize = (tileSize.width() < 150) ? 9 : 11;
-    QLabel* deviceLabel = new QLabel(QString("%1\n%2").arg(deviceName, serial));
+    QLabel* deviceLabel = new QLabel(QString("%1").arg(serial)); // Just serial for cleaner look
     deviceLabel->setAlignment(Qt::AlignCenter);
-    deviceLabel->setStyleSheet(QString("QLabel { color: #333; font-size: %1px; font-weight: bold; "
-                              "background-color: #f0f0f0; padding: 5px; border-radius: 3px; }").arg(fontSize));
-    deviceLabel->setMaximumHeight(50);
+    deviceLabel->setStyleSheet(QString(
+        "QLabel {"
+        "  color: #333333;"
+        "  font-size: %1px;"
+        "  font-weight: bold;"
+        "  background-color: #e8e8e8;"
+        "  padding: 6px;"
+        "  border-radius: 4px;"
+        "  border: 1px solid #c0c0c0;"
+        "}"
+    ).arg(fontSize));
+    deviceLabel->setMaximumHeight(35);
     deviceLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed); // Don't let label expand
 
     // VideoForm will be inserted at position 0 by addDevice
@@ -429,7 +464,7 @@ void FarmViewer::updateGridLayout()
     while (QLayoutItem* item = m_gridLayout->takeAt(0)) {
         delete item;
     }
-    
+
     // Add devices back to grid
     int deviceCount = 0;
     for (auto it = m_deviceContainers.begin(); it != m_deviceContainers.end(); ++it) {
@@ -440,9 +475,18 @@ void FarmViewer::updateGridLayout()
             deviceCount++;
         }
     }
-    
-    // Adjust grid widget size
+
+    // UI IMPROVEMENT: Force grid widget to resize based on contents
+    // This ensures scroll bars appear when grid exceeds visible area
+    m_gridLayout->activate();
     m_gridWidget->adjustSize();
+
+    // Calculate required size for grid widget
+    QSize tileSize = getOptimalTileSize(deviceCount, size());
+    int gridWidth = m_gridCols * (tileSize.width() + m_gridLayout->spacing()) + m_gridLayout->contentsMargins().left() + m_gridLayout->contentsMargins().right();
+    int gridHeight = ((deviceCount + m_gridCols - 1) / m_gridCols) * (tileSize.height() + m_gridLayout->spacing()) + m_gridLayout->contentsMargins().top() + m_gridLayout->contentsMargins().bottom();
+
+    m_gridWidget->setMinimumSize(gridWidth, gridHeight);
 }
 
 void FarmViewer::updateStatus()
