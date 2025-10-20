@@ -27,32 +27,50 @@ Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params
         return;
     }
 
+    qInfo() << "Device: Creating Demuxer...";
+    m_stream = new Demuxer(this);
+    qInfo() << "Device: Demuxer created successfully";
+
     if (params.display) {
-        qInfo() << "Device: Creating Decoder...";
+        qInfo() << "Device: Creating Decoder WITHOUT parent for moveToThread()...";
+        // CRITICAL: Create Decoder WITHOUT parent so it can be moved to another thread
+        // QObject::moveToThread() requires the object to have NO parent
         m_decoder = new Decoder([this](int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV) {
-            // Log first frame only to avoid spam
-            static bool firstFrameDecoded = true;
-            if (firstFrameDecoded) {
+            // Log first frame only to avoid spam (per-device, NOT static)
+            if (!m_firstFrameDecoded) {
                 qInfo() << "========================================";
                 qInfo() << "Device: Decoder callback - FIRST FRAME DECODED!";
                 qInfo() << "  Serial:" << m_params.serial;
                 qInfo() << "  Frame size:" << width << "x" << height;
-                qInfo() << "  Observer count:" << m_deviceObservers.size();
                 qInfo() << "========================================";
-                firstFrameDecoded = false;
+                m_firstFrameDecoded = true;
             }
+
+            // Thread-safe access to observers using mutex
+            QMutexLocker locker(&m_observersMutex);
 
             if (m_deviceObservers.empty()) {
                 qWarning() << "Device: No observers registered for video frames (serial:" << m_params.serial << ")";
                 return;
             }
 
+            qInfo() << "Device: Dispatching frame to" << m_deviceObservers.size() << "observers for:" << m_params.serial;
+
             // Dispatch frame to all observers
             for (const auto& item : m_deviceObservers) {
                 item->onFrame(width, height, dataY, dataU, dataV, linesizeY, linesizeU, linesizeV);
             }
-        }, this);
-        qInfo() << "Device: Decoder created successfully";
+        }, nullptr); // NO PARENT - allows moveToThread()
+        qInfo() << "Device: Decoder created successfully (no parent)";
+
+        // CRITICAL: Move Decoder to Demuxer's thread for FFmpeg thread affinity
+        // FFmpeg codec contexts must be used from the same thread they were created in.
+        // Since Demuxer runs in its own thread and emits packets, Decoder must run there too.
+        qInfo() << "Device: Moving Decoder to Demuxer's thread for FFmpeg thread safety...";
+        qInfo() << "  Decoder parent before move:" << (void*)m_decoder->parent();
+        m_decoder->moveToThread(m_stream);
+        qInfo() << "Device: Decoder moved to Demuxer thread successfully";
+        qInfo() << "  Decoder thread after move:" << (void*)m_decoder->thread();
 
         qInfo() << "Device: Creating FileHandler...";
         m_fileHandler = new FileHandler(this);
@@ -68,10 +86,6 @@ Device::Device(DeviceParams params, QObject *parent) : IDevice(parent), m_params
         }, params.gameScript, this);
         qInfo() << "Device: Controller created successfully";
     }
-
-    qInfo() << "Device: Creating Demuxer...";
-    m_stream = new Demuxer(this);
-    qInfo() << "Device: Demuxer created successfully";
 
     qInfo() << "Device: Creating Server...";
     m_server = new Server(this);
@@ -132,8 +146,10 @@ void Device::registerDeviceObserver(DeviceObserver *observer)
     qInfo() << "Device::registerDeviceObserver() called";
     qInfo() << "  Serial:" << m_params.serial;
     qInfo() << "  Observer pointer:" << observer;
+
+    // Thread-safe registration
+    QMutexLocker locker(&m_observersMutex);
     qInfo() << "  Total observers before insert:" << m_deviceObservers.size();
-    qInfo() << "========================================";
 
     m_deviceObservers.insert(observer);
 
@@ -144,6 +160,8 @@ void Device::registerDeviceObserver(DeviceObserver *observer)
 
 void Device::deRegisterDeviceObserver(DeviceObserver *observer)
 {
+    // Thread-safe deregistration
+    QMutexLocker locker(&m_observersMutex);
     m_deviceObservers.erase(observer);
 }
 
@@ -200,6 +218,7 @@ void Device::initSignals()
 {
     if (m_controller) {
         connect(m_controller, &Controller::grabCursor, this, [this](bool grab){
+            QMutexLocker locker(&m_observersMutex);
             for (const auto& item : m_deviceObservers) {
                 item->grabCursor(grab);
             }
@@ -260,15 +279,25 @@ void Device::initSignals()
                     }
                 }
 
-                // init decoder
+                // CRITICAL: Set decoder frame size BEFORE starting decode
+                // The decoder needs to know the dimensions to properly initialize its codec context
+                // Without this, the codec context remains 0x0 and FFmpeg crashes
                 if (m_decoder) {
-                    m_decoder->open();
+                    qInfo() << "Device: Setting decoder frame size to:" << size;
+                    m_decoder->setFrameSize(size);
                 }
 
-                // init stream
+                // init stream FIRST (starts Demuxer thread)
                 m_stream->installVideoSocket(m_server->removeVideoSocket());
                 m_stream->setFrameSize(size);
                 m_stream->startDecode();
+
+                // CRITICAL: Don't call decoder->open() here!
+                // Demuxer::run() doesn't have Qt event loop, so queued calls never execute
+                // Instead, decoder will initialize LAZILY on first push() call (in Demuxer thread)
+                if (m_decoder) {
+                    qInfo() << "Device: Decoder will initialize lazily on first packet";
+                }
 
                 // recv device msg
                 connect(m_server->getControlSocket(), &QTcpSocket::readyRead, this, [this](){
@@ -308,7 +337,11 @@ void Device::initSignals()
             disconnectDevice();
             qDebug() << "stream thread stop";
         });
+        // CRITICAL: Use DirectConnection since Decoder now runs in Demuxer's thread
+        // Decoder was moved to Demuxer's thread via moveToThread(), so they share the same thread.
+        // This ensures FFmpeg codec operations and packet access happen in the correct thread.
         connect(m_stream, &Demuxer::getFrame, this, [this](AVPacket *packet) {
+            qInfo() << "Device: getFrame signal received, calling decoder->push() from thread:" << QThread::currentThreadId();
             if (m_decoder && !m_decoder->push(packet)) {
                 qCritical("Could not send packet to decoder");
             }
@@ -316,8 +349,11 @@ void Device::initSignals()
             if (m_recorder && !m_recorder->push(packet)) {
                 qCritical("Could not send packet to recorder");
             }
-        }, Qt::DirectConnection);
+        }, Qt::DirectConnection); // DirectConnection is safe now - Decoder is in Demuxer's thread!
         connect(m_stream, &Demuxer::getConfigFrame, this, [this](AVPacket *packet) {
+            // Config packets are for recorder only (file header)
+            // The decoder receives SPS/PPS concatenated with first frame via getFrame signal
+            qInfo() << "Device: getConfigFrame signal received, sending to recorder only...";
             if (m_recorder && !m_recorder->push(packet)) {
                 qCritical("Could not send config packet to recorder");
             }
@@ -326,6 +362,7 @@ void Device::initSignals()
 
     if (m_decoder) {
         connect(m_decoder, &Decoder::updateFPS, this, [this](quint32 fps) {
+            QMutexLocker locker(&m_observersMutex);
             for (const auto& item : m_deviceObservers) {
                 item->updateFPS(fps);
             }
@@ -440,6 +477,7 @@ void Device::postGoBack()
     }
     m_controller->postGoBack();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postGoBack();
     }
@@ -452,6 +490,7 @@ void Device::postGoHome()
     }
     m_controller->postGoHome();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postGoHome();
     }
@@ -464,6 +503,7 @@ void Device::postGoMenu()
     }
     m_controller->postGoMenu();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postGoMenu();
     }
@@ -476,6 +516,7 @@ void Device::postAppSwitch()
     }
     m_controller->postAppSwitch();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postAppSwitch();
     }
@@ -488,6 +529,7 @@ void Device::postPower()
     }
     m_controller->postPower();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postPower();
     }
@@ -500,6 +542,7 @@ void Device::postVolumeUp()
     }
     m_controller->postVolumeUp();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postVolumeUp();
     }
@@ -512,6 +555,7 @@ void Device::postVolumeDown()
     }
     m_controller->postVolumeDown();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postVolumeDown();
     }
@@ -524,6 +568,7 @@ void Device::postCopy()
     }
     m_controller->copy();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postCopy();
     }
@@ -536,6 +581,7 @@ void Device::postCut()
     }
     m_controller->cut();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postCut();
     }
@@ -548,6 +594,7 @@ void Device::setDisplayPower(bool on)
     }
     m_controller->setDisplayPower(on);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->setDisplayPower(on);
     }
@@ -560,6 +607,7 @@ void Device::expandNotificationPanel()
     }
     m_controller->expandNotificationPanel();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->expandNotificationPanel();
     }
@@ -572,6 +620,7 @@ void Device::collapsePanel()
     }
     m_controller->collapsePanel();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->collapsePanel();
     }
@@ -584,6 +633,7 @@ void Device::postBackOrScreenOn(bool down)
     }
     m_controller->postBackOrScreenOn(down);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postBackOrScreenOn(down);
     }
@@ -596,6 +646,7 @@ void Device::postTextInput(QString &text)
     }
     m_controller->postTextInput(text);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->postTextInput(text);
     }
@@ -608,6 +659,7 @@ void Device::requestDeviceClipboard()
     }
     m_controller->requestDeviceClipboard();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->requestDeviceClipboard();
     }
@@ -620,6 +672,7 @@ void Device::setDeviceClipboard(bool pause)
     }
     m_controller->setDeviceClipboard(pause);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->setDeviceClipboard(pause);
     }
@@ -632,6 +685,7 @@ void Device::clipboardPaste()
     }
     m_controller->clipboardPaste();
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->clipboardPaste();
     }
@@ -644,6 +698,7 @@ void Device::pushFileRequest(const QString &file, const QString &devicePath)
     }
     m_fileHandler->onPushFileRequest(getSerial(), file, devicePath);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->pushFileRequest(file, devicePath);
     }
@@ -656,6 +711,7 @@ void Device::installApkRequest(const QString &apkFile)
     }
     m_fileHandler->onInstallApkRequest(getSerial(), apkFile);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->installApkRequest(apkFile);
     }
@@ -668,6 +724,7 @@ void Device::mouseEvent(const QMouseEvent *from, const QSize &frameSize, const Q
     }
     m_controller->mouseEvent(from, frameSize, showSize);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->mouseEvent(from, frameSize, showSize);
     }
@@ -680,6 +737,7 @@ void Device::wheelEvent(const QWheelEvent *from, const QSize &frameSize, const Q
     }
     m_controller->wheelEvent(from, frameSize, showSize);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->wheelEvent(from, frameSize, showSize);
     }
@@ -692,6 +750,7 @@ void Device::keyEvent(const QKeyEvent *from, const QSize &frameSize, const QSize
     }
     m_controller->keyEvent(from, frameSize, showSize);
 
+    QMutexLocker locker(&m_observersMutex);
     for (const auto& item : m_deviceObservers) {
         item->keyEvent(from, frameSize, showSize);
     }

@@ -229,17 +229,18 @@ endif()
 
 # Linux
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # include
-    target_include_directories(${QSC_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/ffmpeg/include)
-    # link
-    set(FFMPEG_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/ffmpeg/lib")
-    target_link_directories(${QSC_PROJECT_NAME} PUBLIC ${FFMPEG_LIB_PATH})
+    # CRITICAL FIX: Use pkg-config to find system FFmpeg (headers + libraries)
+    # This ensures compile-time headers match runtime libraries, preventing ABI mismatches
+    # Previous setup used FFmpeg 4.x headers with FFmpeg 7.x libraries → SEGFAULT in avcodec_send_packet()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale)
+
+    # Use system FFmpeg headers (version-matched with runtime)
+    target_include_directories(${QSC_PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
+
+    # Link against system FFmpeg libraries
     target_link_libraries(${QSC_PROJECT_NAME} PRIVATE
-        # ffmpeg
-        avformat
-        avcodec
-        avutil
-        swscale
+        ${FFMPEG_LIBRARIES}
         z
     )
 

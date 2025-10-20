@@ -3,6 +3,7 @@
 
 #include <set>
 #include <QElapsedTimer>
+#include <QMutex>
 #include <QPointer>
 #include <QTime>
 
@@ -90,6 +91,8 @@ private:
     QElapsedTimer m_startTimeCount;
     DeviceParams m_params;
     std::set<DeviceObserver*> m_deviceObservers;
+    mutable QMutex m_observersMutex; // Protects m_deviceObservers from concurrent access
+    bool m_firstFrameDecoded = false; // Per-device flag (NOT static)
     void* m_userData = nullptr;
 };
 

@@ -87,6 +87,7 @@ private:
     void disconnectDevice(const QString& serial);
     void processDetectedDevices(const QStringList& devices);
     void processConnectionQueue();
+    void connectDevicesInBatches(const QStringList& devices, int batchIndex);
     void onConnectionComplete(const QString& serial, bool success);
     bool isDeviceConnected(const QString& serial) const;
 
@@ -120,7 +121,12 @@ private:
     // Click-to-connect state tracking
     QSet<QString> m_connectedDevices;  // Track which devices are currently connected
     int m_activeConnections;           // Count of active streaming connections
-    static const int MAX_CONCURRENT_STREAMS = 1;  // REDUCED: Start with 1 device for safety testing
+    static const int MAX_CONCURRENT_STREAMS = 200;  // Match DeviceConnectionPool::MAX_CONNECTIONS (supports up to 200 devices)
+
+    // Batch connection state for Phase 1
+    int m_batchConnectionIndex;        // Current batch being processed
+    int m_batchSize;                   // Size of current batch based on quality tier
+    int m_batchDelayMs;                // Delay between batches
 
     // SIMPLIFIED: No connection queue or resource management in display-only mode
     QTimer* m_connectionThrottleTimer;  // Kept for compatibility (unused)

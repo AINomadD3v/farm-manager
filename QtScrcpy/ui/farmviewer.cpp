@@ -33,6 +33,9 @@ FarmViewer::FarmViewer(QWidget *parent)
     , m_mainLayout(nullptr)
     , m_toolbarLayout(nullptr)
     , m_activeConnections(0)
+    , m_batchConnectionIndex(0)
+    , m_batchSize(0)
+    , m_batchDelayMs(0)
     , m_connectionThrottleTimer(nullptr)
     , m_resourceCheckTimer(nullptr)
     , m_gridRows(2)
@@ -284,8 +287,11 @@ void FarmViewer::setupUI()
     // Grid widget
     m_gridWidget = new QWidget();
     m_gridLayout = new QGridLayout(m_gridWidget);
-    m_gridLayout->setContentsMargins(10, 10, 10, 10);
-    m_gridLayout->setSpacing(10);
+    m_gridLayout->setContentsMargins(5, 5, 5, 5); // Reduced margins
+    m_gridLayout->setSpacing(5); // Reduced spacing for tighter grid
+    // Make all columns and rows expand equally
+    m_gridLayout->setColumnStretch(0, 1);
+    m_gridLayout->setRowStretch(0, 1);
     
     m_scrollArea->setWidget(m_gridWidget);
     
@@ -314,16 +320,17 @@ void FarmViewer::addDevice(const QString& serial, const QString& deviceName, con
     // Create VideoForm for this device with dynamic sizing
     auto videoForm = new VideoForm(true, false, false, this); // frameless, no skin, no toolbar
     videoForm->setSerial(serial);
-    videoForm->setMinimumSize(tileSize * 0.9); // Slightly smaller than container
-    videoForm->setMaximumSize(tileSize * 1.8); // Allow some growth
+    // Allow VideoForm to expand freely within grid cell
+    videoForm->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    videoForm->setMinimumSize(tileSize * 0.8); // Minimum size to prevent too small
 
     // Create container widget with device label
     QWidget* container = createDeviceWidget(serial, deviceName);
 
-    // Add VideoForm to container
+    // Add VideoForm to container with high stretch factor so it takes most space
     QVBoxLayout* containerLayout = qobject_cast<QVBoxLayout*>(container->layout());
     if (containerLayout) {
-        containerLayout->insertWidget(0, videoForm, 1); // Insert before label, with stretch
+        containerLayout->insertWidget(0, videoForm, 10); // Insert before label, with high stretch
     }
 
     // Store references
@@ -393,13 +400,12 @@ QWidget* FarmViewer::createDeviceWidget(const QString& serial, const QString& de
     QSize tileSize = getOptimalTileSize(currentDeviceCount, size());
 
     QWidget* container = new QWidget();
-    container->setMinimumSize(tileSize);
-    container->setMaximumSize(tileSize * 2); // Allow some growth
+    container->setMinimumSize(tileSize * 0.8); // Smaller minimum to allow better grid packing
     container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     QVBoxLayout* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(5, 5, 5, 5);
-    layout->setSpacing(5);
+    layout->setContentsMargins(2, 2, 2, 2); // Reduced margins for tighter grid
+    layout->setSpacing(2); // Reduced spacing
 
     // Device info label - scale font based on tile size
     int fontSize = (tileSize.width() < 150) ? 9 : 11;
@@ -408,9 +414,10 @@ QWidget* FarmViewer::createDeviceWidget(const QString& serial, const QString& de
     deviceLabel->setStyleSheet(QString("QLabel { color: #333; font-size: %1px; font-weight: bold; "
                               "background-color: #f0f0f0; padding: 5px; border-radius: 3px; }").arg(fontSize));
     deviceLabel->setMaximumHeight(50);
+    deviceLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed); // Don't let label expand
 
     // VideoForm will be inserted at position 0 by addDevice
-    layout->addWidget(deviceLabel);
+    layout->addWidget(deviceLabel, 0); // No stretch for label
 
     container->setLayout(layout);
     return container;
@@ -811,70 +818,144 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
     qInfo() << "  Final grid:" << m_gridRows << "x" << m_gridCols;
     qInfo() << "  Tile size:" << tileSize;
 
-    // SAFETY FIX: Auto-connect only first device to test for crashes
-    // Once 1 device works reliably, increase MAX_CONCURRENT_STREAMS gradually
-    // This prevents overwhelming the system and allows crash debugging
-    int toConnect = qMin(devices.size(), MAX_CONCURRENT_STREAMS);
-    int remainingDevices = devices.size() - toConnect;
+    // PHASE 1: Batch connection logic based on quality tiers
+    // Determine batch size and delay based on device count and quality tier
+    int deviceCount = devices.size();
 
-    if (toConnect > 0) {
-        qInfo() << "FarmViewer: SAFETY MODE - Auto-connecting only first" << toConnect << "device(s) for testing...";
-        qInfo() << "FarmViewer: If successful, increase MAX_CONCURRENT_STREAMS in farmviewer.h";
-        m_statusLabel->setText(QString("Auto-connecting %1 device (testing mode)...").arg(toConnect));
-        m_statusLabel->setStyleSheet("color: #ff9500; font-size: 12px; font-weight: bold;");  // Orange for testing
+    // Calculate batch parameters based on quality tier
+    // CRITICAL: Delays increased to allow decoders to fully initialize
+    // Each decoder needs time to: receive SPS/PPS config packet, initialize codec context,
+    // and start decoding before next batch overwhelms the system
+    if (deviceCount <= 5) {
+        // TIER_ULTRA (1-5): Connect all at once, no delay
+        m_batchSize = 5;
+        m_batchDelayMs = 0;
+    } else if (deviceCount <= 20) {
+        // TIER_HIGH (6-20): Batch of 5, 2000ms delay between batches
+        // Smaller batches with longer delays for better initialization
+        m_batchSize = 5;
+        m_batchDelayMs = 2000;
+    } else if (deviceCount <= 50) {
+        // TIER_MEDIUM (21-50): Batch of 8, 2500ms delay
+        m_batchSize = 8;
+        m_batchDelayMs = 2500;
+    } else if (deviceCount <= 100) {
+        // TIER_LOW (51-100): Batch of 10, 3000ms delay
+        // Critical for 78 devices - give each batch time to stabilize
+        m_batchSize = 10;
+        m_batchDelayMs = 3000;
+    } else {
+        // TIER_MINIMAL (100+): Batch of 15, 4000ms delay
+        m_batchSize = 15;
+        m_batchDelayMs = 4000;
+    }
+
+    int totalBatches = (deviceCount + m_batchSize - 1) / m_batchSize;  // Ceiling division
+
+    qInfo() << "========================================";
+    qInfo() << "PHASE 1 BATCH CONNECTION STRATEGY";
+    qInfo() << "  Total devices:" << deviceCount;
+    qInfo() << "  Quality tier:" << m_currentQualityProfile.description;
+    qInfo() << "  Batch size:" << m_batchSize;
+    qInfo() << "  Batch delay:" << m_batchDelayMs << "ms";
+    qInfo() << "  Total batches:" << totalBatches;
+    qInfo() << "========================================";
+
+    if (deviceCount > 0) {
+        m_statusLabel->setText(QString("Connecting %1 devices in %2 batches...").arg(deviceCount).arg(totalBatches));
+        m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
 
         // Show progress bar
-        m_connectionProgressBar->setMaximum(toConnect);
+        m_connectionProgressBar->setMaximum(deviceCount);
         m_connectionProgressBar->setValue(0);
         m_connectionProgressBar->setVisible(true);
 
-        // Connect devices sequentially with 500ms delay between each
-        for (int i = 0; i < toConnect; i++) {
-            const QString& serial = devices[i];
-
-            // Use QTimer to connect sequentially with delay
-            QTimer::singleShot(i * 500, this, [this, serial, i, toConnect, remainingDevices]() {
-                qInfo() << "FarmViewer: Auto-connecting device" << (i + 1) << "/" << toConnect << ":" << serial;
-
-                // Update progress
-                m_connectionProgressBar->setValue(i + 1);
-
-                // Update status with progress
-                QString statusText = QString("Connecting: %1/%2").arg(i + 1).arg(toConnect);
-                if (remainingDevices > 0) {
-                    statusText += QString(" (%1 ready to connect)").arg(remainingDevices);
-                }
-                m_statusLabel->setText(statusText);
-
-                // Trigger connection using existing click handler
-                onDeviceTileClicked(serial);
-
-                // Hide progress bar and show final status after last connection starts
-                if (i + 1 == toConnect) {
-                    QTimer::singleShot(1000, this, [this, toConnect, remainingDevices]() {
-                        m_connectionProgressBar->setVisible(false);
-                        QString finalStatus = QString("%1 devices streaming").arg(toConnect);
-                        if (remainingDevices > 0) {
-                            finalStatus += QString(", %1 ready to connect").arg(remainingDevices);
-                        }
-                        m_statusLabel->setText(finalStatus);
-                        qInfo() << "FarmViewer: Auto-connection complete:" << finalStatus;
-                    });
-                }
-            });
-        }
+        // Connect devices in batches
+        m_batchConnectionIndex = 0;
+        connectDevicesInBatches(devices, 0);
     } else {
-        // No auto-connection, just show detected devices
-        m_statusLabel->setText(QString("%1 devices detected (ready for connection)").arg(devices.size()));
-        m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
+        // No devices to connect
+        m_statusLabel->setText("No devices detected");
+        m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
     }
 
-    qInfo() << "FarmViewer: All" << devices.size() << "devices displayed in UI";
-    qInfo() << "FarmViewer: Scheduled auto-connection for" << toConnect << "devices";
-    if (remainingDevices > 0) {
-        qInfo() << "FarmViewer:" << remainingDevices << "devices remain as 'Ready to Connect'";
-    }
+    qInfo() << "FarmViewer: Batch connection initiated for" << deviceCount << "devices";
     qInfo() << "========================================";
+}
+
+void FarmViewer::connectDevicesInBatches(const QStringList& devices, int batchIndex)
+{
+    int totalDevices = devices.size();
+    int totalBatches = (totalDevices + m_batchSize - 1) / m_batchSize;
+
+    // Check if we've processed all batches
+    if (batchIndex >= totalBatches) {
+        qInfo() << "========================================";
+        qInfo() << "PHASE 1: All batches completed!";
+        qInfo() << "  Total devices connected:" << totalDevices;
+        qInfo() << "  Total batches:" << totalBatches;
+        qInfo() << "========================================";
+
+        // Hide progress bar and show final status
+        m_connectionProgressBar->setVisible(false);
+        m_statusLabel->setText(QString("%1 devices connected successfully").arg(totalDevices));
+        m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
+        return;
+    }
+
+    // Calculate range for this batch
+    int batchStart = batchIndex * m_batchSize;
+    int batchEnd = qMin(batchStart + m_batchSize, totalDevices);
+    int devicesInThisBatch = batchEnd - batchStart;
+
+    qInfo() << "========================================";
+    qInfo() << "PHASE 1: Connecting batch" << (batchIndex + 1) << "/" << totalBatches;
+    qInfo() << "  Devices in this batch:" << devicesInThisBatch;
+    qInfo() << "  Device range:" << batchStart << "-" << (batchEnd - 1);
+    qInfo() << "========================================";
+
+    // Update status label
+    m_statusLabel->setText(QString("Connecting batch %1/%2 (devices %3-%4)...")
+        .arg(batchIndex + 1)
+        .arg(totalBatches)
+        .arg(batchStart + 1)
+        .arg(batchEnd));
+
+    // Connect all devices in this batch
+    for (int i = batchStart; i < batchEnd; i++) {
+        const QString& serial = devices[i];
+        qInfo() << "PHASE 1: Connecting device" << (i + 1) << "/" << totalDevices << ":" << serial;
+
+        // Update progress bar
+        m_connectionProgressBar->setValue(i + 1);
+
+        // Trigger connection using existing click handler
+        onDeviceTileClicked(serial);
+    }
+
+    qInfo() << "PHASE 1: Batch" << (batchIndex + 1) << "initiated, scheduling next batch...";
+
+    // Schedule next batch after delay
+    if (batchIndex + 1 < totalBatches) {
+        int delay = m_batchDelayMs;
+        qInfo() << "PHASE 1: Next batch will start in" << delay << "ms";
+
+        QTimer::singleShot(delay, this, [this, devices, batchIndex]() {
+            connectDevicesInBatches(devices, batchIndex + 1);
+        });
+    } else {
+        // This was the last batch, show completion after a short delay
+        QTimer::singleShot(1000, this, [this, totalDevices]() {
+            m_connectionProgressBar->setVisible(false);
+            m_statusLabel->setText(QString("%1 devices connected successfully").arg(totalDevices));
+            m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
+
+            qInfo() << "========================================";
+            qInfo() << "PHASE 1: ALL DEVICES CONNECTED!";
+            qInfo() << "  Total:" << totalDevices << "devices";
+            qInfo() << "========================================";
+        });
+    }
 }
 
 bool FarmViewer::isVisible() const
@@ -952,12 +1033,9 @@ void FarmViewer::connectToDevice(const QString& serial)
     params.codecName = Config::getInstance().getCodecName();
     params.scid = QRandomGenerator::global()->bounded(1, 10000) & 0x7FFFFFFF;
 
-    // Acquire connection from pool (this will create or reuse a connection)
-    qInfo() << "FarmViewer: Acquiring connection from pool...";
-    auto pooledDevice = qsc::DeviceConnectionPool::instance().acquireConnection(params);
-    qInfo() << "FarmViewer: acquireConnection() returned, pooledDevice is:" << (pooledDevice.isNull() ? "NULL" : "VALID");
-
-    // Connect the device using IDeviceManage
+    // Connect the device using IDeviceManage (standard path with proper signal wiring)
+    // NOTE: DeviceConnectionPool is disabled for now as it's not properly integrated
+    // with the DeviceManage signal architecture
     qInfo() << "FarmViewer: Calling IDeviceManage::connectDevice()...";
     bool connectResult = qsc::IDeviceManage::getInstance().connectDevice(params);
 
@@ -968,8 +1046,6 @@ void FarmViewer::connectToDevice(const QString& serial)
     }
 
     qInfo() << "FarmViewer: Connection request sent for device:" << serial;
-    qInfo() << "  Total pool connections:" << qsc::DeviceConnectionPool::instance().getTotalConnectionCount();
-    qInfo() << "  Active connections:" << qsc::DeviceConnectionPool::instance().getActiveConnectionCount();
     qInfo() << "========================================";
 }
 

@@ -9,6 +9,7 @@ extern "C"
 }
 
 #include <functional>
+#include <QSize>
 
 class VideoBuffer;
 class Decoder : public QObject
@@ -22,6 +23,7 @@ public:
     void close();
     bool push(const AVPacket *packet);
     void peekFrame(std::function<void(int width, int height, uint8_t* dataRGB32)> onFrame);
+    void setFrameSize(const QSize& frameSize);
 
 signals:
     void updateFPS(quint32 fps);
@@ -45,6 +47,8 @@ private:
     AVFrame *m_hwFrame = Q_NULLPTR;
     bool m_isCodecCtxOpen = false;
     bool m_useHardwareDecoder = false;
+    bool m_needsInitialization = true;  // Decoder needs open() to be called
+    QSize m_frameSize;  // Frame dimensions from server
     std::function<void(int, int, uint8_t*, uint8_t*, uint8_t*, int, int, int)> m_onFrame = Q_NULLPTR;
 };
 

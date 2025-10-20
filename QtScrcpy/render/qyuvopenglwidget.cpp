@@ -131,11 +131,24 @@ const QSize &QYUVOpenGLWidget::frameSize()
 
 void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *dataV, quint32 linesizeY, quint32 linesizeU, quint32 linesizeV)
 {
+    // CRITICAL FIX: Initialize textures on-demand if not already initialized
+    // This fixes the issue where the first frame is discarded because paintGL() hasn't run yet
+    if (!m_textureInited && !m_frameSize.isEmpty()) {
+        qInfo() << "QYUVOpenGLWidget::updateTextures() - Textures not initialized yet, initializing now";
+        qInfo() << "  Frame size:" << m_frameSize;
+        makeCurrent();
+        initTextures();
+        doneCurrent();
+        qInfo() << "QYUVOpenGLWidget::updateTextures() - Textures initialized successfully";
+    }
+
     if (m_textureInited) {
         updateTexture(m_texture[0], 0, dataY, linesizeY);
         updateTexture(m_texture[1], 1, dataU, linesizeU);
         updateTexture(m_texture[2], 2, dataV, linesizeV);
         update();
+    } else {
+        qWarning() << "QYUVOpenGLWidget::updateTextures() - Cannot update textures, m_textureInited is false and frameSize is" << m_frameSize;
     }
 }
 

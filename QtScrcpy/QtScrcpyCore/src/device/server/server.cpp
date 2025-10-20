@@ -572,15 +572,18 @@ void Server::onControlSocketConnected()
 
 void Server::onVideoSocketReadyRead()
 {
-    if (!m_pendingVideoSocket) {
-        qWarning("onVideoSocketReadyRead: pending video socket is null");
+    // Handle both reverse tunnel mode (m_videoSocket) and forward mode (m_pendingVideoSocket)
+    VideoSocket *videoSocket = m_videoSocket ? m_videoSocket : m_pendingVideoSocket;
+
+    if (!videoSocket) {
+        qWarning("onVideoSocketReadyRead: no video socket available");
         return;
     }
 
     const int requiredBytes = DEVICE_NAME_FIELD_LENGTH + 12;
 
     // Accumulate data in buffer
-    m_readBuffer.append(m_pendingVideoSocket->read(m_pendingVideoSocket->bytesAvailable()));
+    m_readBuffer.append(videoSocket->read(videoSocket->bytesAvailable()));
 
     // Check if we have enough data
     if (m_readBuffer.size() < requiredBytes) {
@@ -605,26 +608,44 @@ void Server::onVideoSocketReadyRead()
     m_readBuffer.remove(0, requiredBytes);
 
     // Disconnect readyRead to avoid multiple calls
-    disconnect(m_pendingVideoSocket, &VideoSocket::readyRead,
+    disconnect(videoSocket, &VideoSocket::readyRead,
                this, &Server::onVideoSocketReadyRead);
 
-    // Check if we can finalize connection
-    if (m_controlSocketReady) {
-        stopConnectTimeoutTimer();
-        m_videoSocket = m_pendingVideoSocket;
-        m_controlSocket = m_pendingControlSocket;
-        m_pendingVideoSocket = Q_NULLPTR;
-        m_pendingControlSocket = Q_NULLPTR;
+    // Check if we can finalize connection based on mode
+    if (m_pendingVideoSocket) {
+        // Forward tunnel mode - wait for control socket
+        if (m_controlSocketReady) {
+            stopConnectTimeoutTimer();
+            m_videoSocket = m_pendingVideoSocket;
+            m_controlSocket = m_pendingControlSocket;
+            m_pendingVideoSocket = Q_NULLPTR;
+            m_pendingControlSocket = Q_NULLPTR;
 
-        // we don't need the adb tunnel anymore
-        disableTunnelForward();
-        m_tunnelEnabled = false;
-        m_restartCount = 0;
-        emit serverStarted(true, m_deviceName, m_deviceSize);
+            // we don't need the adb tunnel anymore
+            disableTunnelForward();
+            m_tunnelEnabled = false;
+            m_restartCount = 0;
+            emit serverStarted(true, m_deviceName, m_deviceSize);
 
-        // Clear device info for next connection
-        m_deviceName = "";
-        m_deviceSize = QSize();
+            // Clear device info for next connection
+            m_deviceName = "";
+            m_deviceSize = QSize();
+        }
+    } else {
+        // Reverse tunnel mode - device info received
+        // Check if control socket is also ready
+        qInfo("Device info received in reverse mode, checking for control socket...");
+        if (m_controlSocket && m_controlSocket->isValid()) {
+            // Both sockets ready - emit success!
+            qInfo("Control socket already connected, emitting serverStarted(true)");
+            m_serverSocket.close();
+            disableTunnelReverse();
+            m_tunnelEnabled = false;
+            emit serverStarted(true, m_deviceName, m_deviceSize);
+        } else {
+            // Control socket not ready yet, wait for it to connect
+            qInfo("Waiting for control socket to connect...");
+        }
     }
 }
 

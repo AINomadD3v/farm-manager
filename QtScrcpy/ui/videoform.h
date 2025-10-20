@@ -82,9 +82,7 @@ private:
     QPointer<QWidget> m_loadingWidget;
     QPointer<QYUVOpenGLWidget> m_videoWidget;
     QPointer<QLabel> m_fpsLabel;
-    QPointer<QWidget> m_placeholderWidget;
-    QPointer<QLabel> m_placeholderSerialLabel;
-    QPointer<QLabel> m_placeholderStatusLabel;
+    QPointer<QLabel> m_footerLabel;
 
     //inside member
     QSize m_frameSize;

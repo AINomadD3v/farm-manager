@@ -7,6 +7,11 @@
 #include <QTranslator>
 #include <QDateTime>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+}
+
 #include "config.h"
 #include "dialog.h"
 #include "mousetap/mousetap.h"
@@ -45,6 +50,12 @@ int main(int argc, char *argv[])
 #endif
 
     g_msgType = covertLogLevel(Config::getInstance().getLogLevel());
+
+    // CRITICAL: Enable OpenGL context sharing for 78+ device farm
+    // This allows multiple QOpenGLWidget instances to share GPU resources
+    // Without this, creating 78 OpenGL contexts simultaneously causes GPU driver crash
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    qInfo() << "OpenGL context sharing enabled for multi-device farm";
 
     // set on QApplication before
     // bug: config path is error on mac
@@ -109,6 +120,39 @@ int main(int argc, char *argv[])
     }
 
     qsc::AdbProcess::setAdbPath(Config::getInstance().getAdbPath());
+
+    // CRITICAL: Test FFmpeg codec initialization before starting application
+    // This verifies that avcodec_open2() works and doesn't crash
+    qInfo() << "========================================";
+    qInfo() << "Testing FFmpeg H.264 decoder initialization...";
+    const AVCodec* testCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (testCodec) {
+        qInfo() << "  H.264 codec found:" << testCodec->name;
+        AVCodecContext* testCtx = avcodec_alloc_context3(testCodec);
+        if (testCtx) {
+            qInfo() << "  Codec context allocated";
+            testCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+            testCtx->thread_count = 1;
+            testCtx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+
+            int ret = avcodec_open2(testCtx, testCodec, nullptr);
+            if (ret == 0) {
+                qInfo() << "  SUCCESS: avcodec_open2() works! Codec initialized successfully.";
+                avcodec_free_context(&testCtx);
+            } else {
+                char errBuf[256];
+                av_strerror(ret, errBuf, sizeof(errBuf));
+                qCritical() << "  FAILED: avcodec_open2() returned error:" << errBuf;
+                qCritical() << "  FFmpeg codec initialization is broken! Application may crash.";
+                avcodec_free_context(&testCtx);
+            }
+        } else {
+            qCritical() << "  FAILED: Could not allocate codec context";
+        }
+    } else {
+        qCritical() << "  FAILED: H.264 codec not found!";
+    }
+    qInfo() << "========================================";
 
     // Setup Unix signal handlers BEFORE starting event loop
     // This enables graceful shutdown on Ctrl+C and SIGTERM
