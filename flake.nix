@@ -163,7 +163,7 @@
           export QTSCRCPY_ADB_PATH="${pkgs.android-tools}/bin/adb"
         '';
 
-        # Graphics optimization settings
+        # Graphics settings for CPU-only software rendering (cross-machine compatibility)
         graphicsEnvVars = ''
           export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
           export __GLX_VENDOR_LIBRARY_NAME=mesa
@@ -172,7 +172,8 @@
           export QT_XCB_GL_INTEGRATION=xcb_glx
           export MESA_GL_VERSION_OVERRIDE=3.3
           export MESA_GLSL_VERSION_OVERRIDE=330
-          export LIBGL_ALWAYS_SOFTWARE=0
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export LIBGL_DRI3_DISABLE=1
         '';
 
         # Load farm functions
@@ -414,6 +415,7 @@
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
             "-DENABLE_DETAILED_LOGS=OFF"
             "-DQT_DESIRED_VERSION=6"
+            "-DQT_FIND_PRIVATE_MODULES=ON"
             "-DCMAKE_INSTALL_PREFIX=${placeholder "out"}"
           ];
           

@@ -246,20 +246,31 @@ bool Decoder::open()
     qInfo() << "========================================";
     qInfo() << "Decoder::open() START in thread:" << QThread::currentThreadId();
 
-    // Try hardware decoders first
-    if (openHardwareDecoder()) {
-        // CRITICAL: Add settle time for hardware decoder
-        // avcodec_open2() returns immediately but FFmpeg's internal state needs time to stabilize
-        // Without this delay, immediate calls to avcodec_send_packet() can crash
-        qInfo() << "Decoder::open() - Hardware decoder opened, adding settle time...";
-        QThread::msleep(50);
-        qInfo() << "Decoder::open() - Hardware decoder ready after settle time";
-        qInfo() << "========================================";
-        return true;
+    // Check for forced software decoding (for cross-machine compatibility)
+    bool forceSoftware = qEnvironmentVariableIsSet("QTSCRCPY_SOFTWARE_DECODER") ||
+                         qEnvironmentVariableIsSet("LIBGL_ALWAYS_SOFTWARE");
+
+    if (forceSoftware) {
+        qInfo() << "Decoder::open() - Software decoding forced via environment variable";
+        qInfo() << "Decoder::open() - Skipping hardware decoder attempts";
+    } else {
+        // Try hardware decoders first
+        if (openHardwareDecoder()) {
+            // CRITICAL: Add settle time for hardware decoder
+            // avcodec_open2() returns immediately but FFmpeg's internal state needs time to stabilize
+            // Without this delay, immediate calls to avcodec_send_packet() can crash
+            qInfo() << "Decoder::open() - Hardware decoder opened, adding settle time...";
+            QThread::msleep(50);
+            qInfo() << "Decoder::open() - Hardware decoder ready after settle time";
+            qInfo() << "========================================";
+            return true;
+        }
     }
 
     // Fallback to software decoder
-    qWarning() << "All hardware decoders failed, falling back to software decoder";
+    if (!forceSoftware) {
+        qWarning() << "All hardware decoders failed, falling back to software decoder";
+    }
     bool result = openSoftwareDecoder();
 
     if (result) {

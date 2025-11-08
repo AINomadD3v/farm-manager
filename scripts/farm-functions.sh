@@ -6,7 +6,7 @@
 build_debug() {
   echo "🔨 Building QtScrcpy in Debug mode..."
   cd build/debug
-  cmake ../.. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  cmake ../.. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DQT_FIND_PRIVATE_MODULES=ON
   make -j$(nproc)
   cd ../..
 }
@@ -23,7 +23,7 @@ build_release() {
   fi
 
   cd build/release
-  cmake ../.. -DCMAKE_BUILD_TYPE=Release
+  cmake ../.. -DCMAKE_BUILD_TYPE=Release -DQT_FIND_PRIVATE_MODULES=ON
   make -j$(nproc)
   cd ../..
 
@@ -44,11 +44,13 @@ run_qtscrcpy() {
     return 1
   fi
 
-  echo "🚀 Starting QtScrcpy with optimized graphics settings..."
+  echo "🚀 Starting QtScrcpy with CPU-only software rendering..."
   echo "📱 Connected devices:"
   adb devices
-  echo "🎮 Launching QtScrcpy GUI with desktop OpenGL..."
-  # Force desktop OpenGL to fix shader precision issues
+  echo "🎮 Launching QtScrcpy GUI..."
+  # Force CPU-only software rendering for cross-machine compatibility
+  LIBGL_ALWAYS_SOFTWARE=1 \
+  LIBGL_DRI3_DISABLE=1 \
   QT_OPENGL=desktop \
   QT_XCB_GL_INTEGRATION=xcb_glx \
   MESA_GL_VERSION_OVERRIDE=3.3 \
@@ -71,8 +73,10 @@ run_qtscrcpy_device() {
     return 1
   fi
 
-  echo "🚀 Starting QtScrcpy for device: $device_ip with desktop OpenGL..."
-  # Force desktop OpenGL to fix shader precision issues
+  echo "🚀 Starting QtScrcpy for device: $device_ip with CPU-only software rendering..."
+  # Force CPU-only software rendering for cross-machine compatibility
+  LIBGL_ALWAYS_SOFTWARE=1 \
+  LIBGL_DRI3_DISABLE=1 \
   QT_OPENGL=desktop \
   QT_XCB_GL_INTEGRATION=xcb_glx \
   MESA_GL_VERSION_OVERRIDE=3.3 \
@@ -128,7 +132,10 @@ run_qtscrcpy_farm() {
   sleep 1
 
   # Launch single QtScrcpy instance - it has built-in Farm Viewer
+  # Force CPU-only software rendering for cross-machine compatibility
   DISPLAY="${DISPLAY:-:0}" \
+  LIBGL_ALWAYS_SOFTWARE=1 \
+  LIBGL_DRI3_DISABLE=1 \
   QT_OPENGL=desktop \
   QT_XCB_GL_INTEGRATION=xcb_glx \
   MESA_GL_VERSION_OVERRIDE=3.3 \
