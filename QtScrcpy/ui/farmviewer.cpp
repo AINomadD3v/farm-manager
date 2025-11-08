@@ -59,6 +59,15 @@ FarmViewer::FarmViewer(QWidget *parent)
     setMinimumSize(800, 600);
     resize(1200, 900);
 
+    // NOTE: setWindowFlags() is NOT called here because calling it on an unshown widget
+    // causes Qt to hide the window and reconstruct the platform window, triggering spurious
+    // close events. The widget is created as a top-level window by Qt automatically, so
+    // explicit flag setting is unnecessary and causes the first-launch open-close-reopen bug.
+    // Reference: Qt documentation notes that setWindowFlags() hides the widget as part of
+    // the platform window recreation process. We defer any window customization to after
+    // the window is shown if actually needed in the future.
+    // setAttribute(Qt::WA_DeleteOnClose, false); // Not needed - singleton pattern prevents deletion
+
     qInfo() << "FarmViewer: Centering window on screen...";
     // Center window on screen
     QScreen *screen = QApplication::primaryScreen();
@@ -95,6 +104,19 @@ FarmViewer::FarmViewer(QWidget *parent)
             }
         });
     qInfo() << "FarmViewer: Device detection ADB connection completed";
+
+    // Periodic device polling (matches Dialog's m_autoUpdatetimer behavior)
+    m_deviceDetectionTimer = new QTimer(this);
+    m_deviceDetectionTimer->setInterval(5000);  // Poll every 5 seconds
+    connect(m_deviceDetectionTimer, &QTimer::timeout, this, [this]() {
+        // Only poll if visible, not connecting, and ADB not already running
+        if (this->isVisible() && !m_isConnecting && !m_deviceDetectionAdb.isRuning()) {
+            qDebug() << "FarmViewer: Auto-polling for new devices...";
+            m_deviceDetectionAdb.execute("", QStringList() << "devices");
+        }
+    });
+    m_deviceDetectionTimer->start();
+    qInfo() << "FarmViewer: Periodic device detection enabled (5s interval)";
 
     qInfo() << "FarmViewer: Connecting to IDeviceManage signals...";
     // Connect to IDeviceManage signals to track connection state
@@ -210,6 +232,11 @@ FarmViewer::~FarmViewer()
 {
     qDebug() << "FarmViewer: Destructor called";
 
+    // Stop device detection timer
+    if (m_deviceDetectionTimer) {
+        m_deviceDetectionTimer->stop();
+    }
+
     // Ensure cleanup happens
     if (!m_isShuttingDown) {
         cleanupAndExit();
@@ -230,6 +257,13 @@ FarmViewer::~FarmViewer()
         ::close(s_signalFd[1]);
         s_signalFd[1] = -1;
     }
+}
+
+void FarmViewer::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // Auto-detection is handled in showFarmViewer(), not here
+    // This prevents window recreation issues during first show
 }
 
 FarmViewer& FarmViewer::instance()
@@ -497,8 +531,9 @@ void FarmViewer::updateStatus()
         m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
     } else {
         // SIMPLIFIED: Just show device count (no quality info since we're not streaming)
-        m_statusLabel->setText(QString("%1 devices detected (ready for connection)")
-            .arg(deviceCount));
+        m_statusLabel->setText(QString("%1 %2 detected (ready for connection)")
+            .arg(deviceCount)
+            .arg(deviceCount == 1 ? "device" : "devices"));
         m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
     }
 }
@@ -706,14 +741,14 @@ void FarmViewer::showFarmViewer()
         }
     }
 
-    // If no devices are connected yet, auto-detect and connect to available devices
-    // IMPORTANT: Defer to event loop to prevent blocking the UI
-    if (connectedSerials.isEmpty()) {
+    // Auto-detection after window is fully shown
+    if (connectedSerials.isEmpty() && !m_autoDetectionTriggered) {
+        m_autoDetectionTriggered = true;
         qInfo() << "FarmViewer: No devices connected yet, scheduling auto-detection...";
         m_statusLabel->setText("Detecting devices...");
         m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px;");
 
-        // Defer autoDetectAndConnectDevices to next event loop iteration
+        // Trigger auto-detection after window is fully visible
         QTimer::singleShot(0, this, [this]() {
             autoDetectAndConnectDevices();
         });
@@ -776,14 +811,29 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
     qInfo() << "Device count:" << devices.size();
     qInfo() << "========================================";
 
-    if (devices.isEmpty()) {
+    // Filter for NEW devices not already displayed
+    QStringList newDevices;
+    for (const QString& serial : devices) {
+        if (!m_deviceForms.contains(serial)) {
+            newDevices.append(serial);
+        }
+    }
+
+    if (newDevices.isEmpty()) {
+        qDebug() << "FarmViewer: No new devices detected, all devices already displayed";
+        return;  // All devices already in grid, nothing to do
+    }
+
+    qInfo() << "FarmViewer: Found" << newDevices.size() << "NEW devices:" << newDevices;
+
+    if (newDevices.isEmpty()) {
         qDebug() << "FarmViewer: No devices detected";
         m_statusLabel->setText("No devices found");
         m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
         return;
     }
 
-    qDebug() << "FarmViewer: Found" << devices.size() << "devices";
+    qDebug() << "FarmViewer: Found" << newDevices.size() << "new devices";
 
     // CRITICAL FIX: Suspend layout updates during batch device addition
     // This prevents calculateOptimalGrid() from being called for EVERY device
@@ -794,7 +844,7 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
     int devicesAddedCount = 0;
 
     // Add all devices to the UI grid WITHOUT triggering layout recalculations
-    for (const QString& serial : devices) {
+    for (const QString& serial : newDevices) {
         if (!m_deviceForms.contains(serial)) {
             qDebug() << "FarmViewer: Adding device to UI (no layout update):" << serial;
 
@@ -864,7 +914,7 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
 
     // PHASE 1: Batch connection logic based on quality tiers
     // Determine batch size and delay based on device count and quality tier
-    int deviceCount = devices.size();
+    int deviceCount = newDevices.size();
 
     // Calculate batch parameters based on quality tier
     // CRITICAL: Delays increased to allow decoders to fully initialize
@@ -906,7 +956,11 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
     qInfo() << "========================================";
 
     if (deviceCount > 0) {
-        m_statusLabel->setText(QString("Connecting %1 devices in %2 batches...").arg(deviceCount).arg(totalBatches));
+        m_statusLabel->setText(QString("Connecting %1 %2 in %3 %4...")
+            .arg(deviceCount)
+            .arg(deviceCount == 1 ? "device" : "devices")
+            .arg(totalBatches)
+            .arg(totalBatches == 1 ? "batch" : "batches"));
         m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
 
         // Show progress bar
@@ -916,7 +970,7 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
 
         // Connect devices in batches
         m_batchConnectionIndex = 0;
-        connectDevicesInBatches(devices, 0);
+        connectDevicesInBatches(newDevices, 0);
     } else {
         // No devices to connect
         m_statusLabel->setText("No devices detected");
@@ -942,7 +996,9 @@ void FarmViewer::connectDevicesInBatches(const QStringList& devices, int batchIn
 
         // Hide progress bar and show final status
         m_connectionProgressBar->setVisible(false);
-        m_statusLabel->setText(QString("%1 devices connected successfully").arg(totalDevices));
+        m_statusLabel->setText(QString("%1 %2 connected successfully")
+            .arg(totalDevices)
+            .arg(totalDevices == 1 ? "device" : "devices"));
         m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
         return;
     }
@@ -991,7 +1047,9 @@ void FarmViewer::connectDevicesInBatches(const QStringList& devices, int batchIn
         // This was the last batch, show completion after a short delay
         QTimer::singleShot(1000, this, [this, totalDevices]() {
             m_connectionProgressBar->setVisible(false);
-            m_statusLabel->setText(QString("%1 devices connected successfully").arg(totalDevices));
+            m_statusLabel->setText(QString("%1 %2 connected successfully")
+                .arg(totalDevices)
+                .arg(totalDevices == 1 ? "device" : "devices"));
             m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
 
             qInfo() << "========================================";
@@ -1241,7 +1299,9 @@ void FarmViewer::onConnectionBatchCompleted(int successful, int failed)
     qInfo() << "FarmViewer: Connection batch completed -" << successful << "successful," << failed << "failed";
     m_connectionProgressBar->setVisible(false);
 
-    QString statusText = QString("Connected: %1 devices").arg(successful);
+    QString statusText = QString("Connected: %1 %2")
+        .arg(successful)
+        .arg(successful == 1 ? "device" : "devices");
     if (failed > 0) {
         statusText += QString(" (%1 failed)").arg(failed);
     }
