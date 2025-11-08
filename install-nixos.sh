@@ -127,6 +127,16 @@ cd "${INSTALL_DIR}"
 # On NixOS, the binary should already be linked with correct libraries
 # No need to set LD_LIBRARY_PATH as everything is in /nix/store
 
+# Force CPU-only software rendering for cross-machine compatibility
+export LIBGL_ALWAYS_SOFTWARE=1
+export LIBGL_DRI3_DISABLE=1
+export __GLX_VENDOR_LIBRARY_NAME=mesa
+export QT_OPENGL=desktop
+export QT_QPA_PLATFORM=xcb
+export QT_XCB_GL_INTEGRATION=xcb_glx
+export MESA_GL_VERSION_OVERRIDE=3.3
+export MESA_GLSL_VERSION_OVERRIDE=330
+
 # Launch the application
 exec ./QtScrcpy "$@"
 EOF

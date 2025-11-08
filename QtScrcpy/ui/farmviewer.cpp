@@ -214,11 +214,11 @@ FarmViewer::FarmViewer(QWidget *parent)
         qInfo() << "FarmViewer: Unix signal handler initialized (socketpair pattern)";
     }
 
-    // Connect to application aboutToQuit to ensure cleanup - deferred to avoid blocking
-    QTimer::singleShot(0, this, [this]() {
-        connect(qApp, &QApplication::aboutToQuit, this, &FarmViewer::cleanupAndExit);
-        qInfo() << "FarmViewer: Cleanup handler connected";
-    });
+    // CRITICAL FIX: Connect cleanup handler immediately, not deferred.
+    // Deferred QTimer::singleShot(0) creates race condition where window can close
+    // before cleanup is connected. Direct connection is safe and prevents close/reopen.
+    connect(qApp, &QApplication::aboutToQuit, this, &FarmViewer::cleanupAndExit);
+    qInfo() << "FarmViewer: Cleanup handler connected immediately";
 
     // SIMPLIFIED: No connection management needed in display-only mode
     m_resourceCheckTimer = nullptr;
@@ -264,6 +264,17 @@ void FarmViewer::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
     // Auto-detection is handled in showFarmViewer(), not here
     // This prevents window recreation issues during first show
+}
+
+void FarmViewer::closeEvent(QCloseEvent *event)
+{
+    // CRITICAL FIX: FarmViewer is a singleton managed by Dialog.
+    // Prevent unwanted window closes by ignoring the close event and hiding instead.
+    // This maintains device connections and prevents the close/reopen cycle.
+    // The window will be hidden but the object stays alive for future use.
+    event->ignore();
+    hide();
+    qInfo() << "FarmViewer: Close event ignored, hiding window instead";
 }
 
 FarmViewer& FarmViewer::instance()
@@ -741,17 +752,18 @@ void FarmViewer::showFarmViewer()
         }
     }
 
-    // Auto-detection after window is fully shown
+    // CRITICAL FIX: Auto-detection after window is fully shown.
+    // Deferred QTimer::singleShot(0) creates race condition with window visibility.
+    // Direct call after window activation ensures proper initialization sequence.
     if (connectedSerials.isEmpty() && !m_autoDetectionTriggered) {
         m_autoDetectionTriggered = true;
-        qInfo() << "FarmViewer: No devices connected yet, scheduling auto-detection...";
+        qInfo() << "FarmViewer: No devices connected yet, starting auto-detection...";
         m_statusLabel->setText("Detecting devices...");
         m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px;");
 
-        // Trigger auto-detection after window is fully visible
-        QTimer::singleShot(0, this, [this]() {
-            autoDetectAndConnectDevices();
-        });
+        // Call auto-detection directly after window is shown and activated
+        autoDetectAndConnectDevices();
+        qInfo() << "FarmViewer: Auto-detection started immediately after window activation";
     }
 
     qInfo() << "FarmViewer: showFarmViewer() completed";
@@ -835,18 +847,17 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
 
     qDebug() << "FarmViewer: Found" << newDevices.size() << "new devices";
 
-    // CRITICAL FIX: Suspend layout updates during batch device addition
-    // This prevents calculateOptimalGrid() from being called for EVERY device
-    qInfo() << "FarmViewer: SUSPENDING layout updates for batch device addition";
-    m_gridLayout->setEnabled(false);
+    // CRITICAL FIX: Do NOT suspend layout - this causes visibility cycles and close/reopen behavior.
+    // Disabling the layout causes widgets to be temporarily invisible, triggering unwanted
+    // close events. Instead, batch add all devices and update layout ONCE at the end.
 
     // Track how many new devices we're adding
     int devicesAddedCount = 0;
 
-    // Add all devices to the UI grid WITHOUT triggering layout recalculations
+    // Add all devices to the UI grid in a single batch
     for (const QString& serial : newDevices) {
         if (!m_deviceForms.contains(serial)) {
-            qDebug() << "FarmViewer: Adding device to UI (no layout update):" << serial;
+            qDebug() << "FarmViewer: Adding device to UI:" << serial;
 
             // Create VideoForm with default size (will be resized later)
             auto videoForm = new VideoForm(true, false, false, this);
@@ -875,9 +886,9 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
         }
     }
 
-    // CRITICAL FIX: Now calculate optimal grid ONCE for all devices
+    // Calculate optimal grid ONCE for all devices
     int totalDevices = m_deviceForms.size();
-    qInfo() << "FarmViewer: All devices added. Now calculating optimal grid ONCE for" << totalDevices << "devices";
+    qInfo() << "FarmViewer: All devices added. Calculating optimal grid ONCE for" << totalDevices << "devices";
     calculateOptimalGrid(totalDevices, this->size());
 
     // Update all widget sizes based on the final grid calculation
@@ -898,9 +909,8 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
         }
     }
 
-    // Resume layout updates and rebuild grid ONCE
-    qInfo() << "FarmViewer: RESUMING layout updates and rebuilding grid";
-    m_gridLayout->setEnabled(true);
+    // Update grid layout ONCE without suspension
+    qInfo() << "FarmViewer: Updating grid layout";
     updateGridLayout();
 
     // Update status
@@ -1044,19 +1054,19 @@ void FarmViewer::connectDevicesInBatches(const QStringList& devices, int batchIn
             connectDevicesInBatches(devices, batchIndex + 1);
         });
     } else {
-        // This was the last batch, show completion after a short delay
-        QTimer::singleShot(1000, this, [this, totalDevices]() {
-            m_connectionProgressBar->setVisible(false);
-            m_statusLabel->setText(QString("%1 %2 connected successfully")
-                .arg(totalDevices)
-                .arg(totalDevices == 1 ? "device" : "devices"));
-            m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
+        // CRITICAL FIX: Update UI immediately when last batch completes.
+        // Deferred QTimer::singleShot(1000) creates race condition and close/reopen behavior.
+        // Update status immediately without additional delays.
+        m_connectionProgressBar->setVisible(false);
+        m_statusLabel->setText(QString("%1 %2 connected successfully")
+            .arg(totalDevices)
+            .arg(totalDevices == 1 ? "device" : "devices"));
+        m_statusLabel->setStyleSheet("color: #00b894; font-size: 12px; font-weight: bold;");
 
-            qInfo() << "========================================";
-            qInfo() << "PHASE 1: ALL DEVICES CONNECTED!";
-            qInfo() << "  Total:" << totalDevices << "devices";
-            qInfo() << "========================================";
-        });
+        qInfo() << "========================================";
+        qInfo() << "PHASE 1: ALL DEVICES CONNECTED!";
+        qInfo() << "  Total:" << totalDevices << "devices";
+        qInfo() << "========================================";
     }
 }
 

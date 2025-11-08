@@ -75,6 +75,8 @@ private slots:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     explicit FarmViewer(QWidget *parent = nullptr);
@@ -146,9 +148,11 @@ private:
 
     // Device detection
     qsc::AdbProcess m_deviceDetectionAdb;
+    QTimer* m_deviceDetectionTimer;  // Periodic device polling
 
     // Connection state
     bool m_isConnecting;
+    bool m_autoDetectionTriggered = false;
 
     // Unix signal handling using socketpair pattern
     // This is the ONLY async-signal-safe way to handle signals in Qt
