@@ -565,11 +565,16 @@ void Dialog::onDeviceDisconnected(QString serial)
 {
     GroupController::instance().removeDevice(serial);
 
-    // Also remove from FarmViewer if it exists (but only if it was already created)
+    // CRITICAL FIX: DO NOT remove device from FarmViewer on disconnect
+    // FarmViewer manages its own device lifecycle and keeps tiles visible
+    // even when disconnected. Removing widgets here causes the disappearing bug
+    // where clicking on devices with black/white screens makes them vanish.
+    /*
     if (FarmViewer::s_instance != nullptr) {
         FarmViewer::instance().removeDevice(serial);
     }
-    
+    */
+
     auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
     if (!device) {
         return;

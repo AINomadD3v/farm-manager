@@ -260,6 +260,21 @@ void DeviceStreamWidget::initTextures()
         return;
     }
 
+    // Pre-allocate buffers with proper YUV420 black (prevents green screen)
+    // YUV420: Y plane is full size, U/V planes are quarter size (half width × half height)
+    int ySize = m_frameSize.width() * m_frameSize.height();
+    int uvSize = ySize / 4;
+
+    quint8* initialYData = new quint8[ySize];
+    quint8* initialUVData = new quint8[uvSize];
+
+    // Initialize Y plane to 0x00 (black luminance)
+    memset(initialYData, 0x00, ySize);
+
+    // Initialize U/V planes to 0x80 (neutral chrominance = 128)
+    // CRITICAL: Must be 0x80, not 0x00! U/V = 128 is neutral gray in YUV color space
+    memset(initialUVData, 0x80, uvSize);
+
     // Create Y texture (full resolution)
     glGenTextures(1, &m_textures[0]);
     glBindTexture(GL_TEXTURE_2D, m_textures[0]);
@@ -268,7 +283,7 @@ void DeviceStreamWidget::initTextures()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width(), m_frameSize.height(),
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialYData);
 
     // Create U texture (half resolution for YUV420)
     glGenTextures(1, &m_textures[1]);
@@ -278,7 +293,7 @@ void DeviceStreamWidget::initTextures()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2,
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialUVData);
 
     // Create V texture (half resolution for YUV420)
     glGenTextures(1, &m_textures[2]);
@@ -288,7 +303,11 @@ void DeviceStreamWidget::initTextures()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2,
-                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+                 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialUVData);
+
+    // Clean up temporary buffers
+    delete[] initialYData;
+    delete[] initialUVData;
 
     m_textureInited = true;
 }

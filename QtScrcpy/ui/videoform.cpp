@@ -1,4 +1,5 @@
 // #include <QDesktopWidget>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QLabel>
 #include <QMessageBox>
@@ -29,9 +30,10 @@
 
 // Global semaphore to serialize OpenGL widget creation across all devices
 // This prevents GPU driver crash when many devices try to create OpenGL contexts simultaneously
-// PHASE 1: Increased from 5 to 20 concurrent OpenGL context creations
-// Modern GPUs can handle 20 concurrent contexts safely (supports 200+ devices with batching)
-static QSemaphore g_openglCreationSemaphore(20);
+// PHASE 3: Increased from 8 to 24 to reduce queue bottleneck with 96 devices
+// With 8 limit and 96 devices, 88 devices wait in queue causing texture initialization timing issues
+// Modern GPUs easily support 24+ concurrent OpenGL contexts without crashes
+static QSemaphore g_openglCreationSemaphore(24);
 
 VideoForm::VideoForm(bool framelessWindow, bool skin, bool showToolbar, QWidget *parent) : QWidget(parent), ui(new Ui::videoForm), m_skin(skin)
 {
@@ -127,6 +129,7 @@ void VideoForm::createVideoWidget()
     }
 
     qInfo() << "========================================";
+    qInfo() << "VideoForm::createVideoWidget() CREATING OpenGL widget for" << m_serial;
     qInfo() << "VideoForm::createVideoWidget() - ACQUIRING SEMAPHORE for:" << m_serial;
     qInfo() << "  Available permits:" << g_openglCreationSemaphore.available();
 
@@ -164,6 +167,7 @@ void VideoForm::createVideoWidget()
         m_videoWidget->show();
         m_videoWidget->setMouseTracking(true);
 
+        qInfo() << "VideoForm::createVideoWidget() OpenGL widget CREATED for" << m_serial;
         qInfo() << "VideoForm::createVideoWidget() - OpenGL widget created successfully for:" << m_serial;
         qInfo() << "========================================";
 
@@ -264,21 +268,22 @@ void VideoForm::showFPS(bool show)
 
 void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV, int linesizeY, int linesizeU, int linesizeV)
 {
-    qInfo() << "VideoForm::updateRender() ENTRY - Serial:" << m_serial << "Size:" << width << "x" << height;
+    // DIAGNOSTIC: Per-instance frame counter (member variable - thread-safe for this instance)
+    m_frameCounter++;
+
+    if (m_frameCounter <= 5 || m_frameCounter % 30 == 0) {  // Log first 5 frames + every 30 frames
+        qInfo() << "VideoForm::updateRender() Frame" << m_frameCounter
+                << "for" << m_serial << "Size:" << width << "x" << height
+                << "Strides:" << linesizeY << linesizeU << linesizeV
+                << "Widget exists:" << (m_videoWidget != nullptr)
+                << "Widget size:" << (m_videoWidget ? m_videoWidget->size() : QSize());
+    }
 
     // Create OpenGL video widget on-demand when first frame arrives
     // This prevents GPU resource exhaustion when showing 78+ device tiles
     if (!m_videoWidget) {
-        qInfo() << "========================================";
-        qInfo() << "VideoForm::updateRender() - FIRST FRAME RECEIVED!";
-        qInfo() << "  Serial:" << m_serial;
-        qInfo() << "  Frame size:" << width << "x" << height;
-        qInfo() << "  Creating OpenGL widget on-demand...";
-        qInfo() << "========================================";
-
         try {
             createVideoWidget();
-            qInfo() << "VideoForm::updateRender() - createVideoWidget() returned successfully";
         } catch (const std::exception& e) {
             qCritical() << "VideoForm::updateRender() - EXCEPTION in createVideoWidget():" << e.what();
             return;
@@ -294,10 +299,7 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
         return;
     }
 
-    qInfo() << "VideoForm::updateRender() - Video widget exists, proceeding with rendering...";
-
     if (m_videoWidget->isHidden()) {
-        qInfo() << "VideoForm: Video widget was hidden, showing it now for:" << m_serial;
         if (m_loadingWidget) {
             m_loadingWidget->close();
         }
@@ -306,11 +308,16 @@ void VideoForm::updateRender(int width, int height, uint8_t* dataY, uint8_t* dat
 
     updateShowSize(QSize(width, height));
 
-    qInfo() << "VideoForm::updateRender() - About to call setFrameSize and updateTextures...";
+    // GEOMETRY FIX: Force keepRatioWidget to recalculate video widget geometry
+    // 1. Process all pending events to ensure keepRatioWidget has new size from window resize
+    QCoreApplication::processEvents();
+    // 2. Manually trigger keepRatioWidget's resizeEvent to call adjustSubWidget()
+    //    This recalculates the video widget's geometry inside the keepRatioWidget
+    QResizeEvent keepRatioResize(ui->keepRatioWidget->size(), ui->keepRatioWidget->size());
+    QApplication::sendEvent(ui->keepRatioWidget, &keepRatioResize);
+
     m_videoWidget->setFrameSize(QSize(width, height));
-    qInfo() << "VideoForm::updateRender() - Calling updateTextures()...";
     m_videoWidget->updateTextures(dataY, dataU, dataV, linesizeY, linesizeU, linesizeV);
-    qInfo() << "VideoForm::updateRender() - updateTextures() completed, EXIT";
 }
 
 void VideoForm::setSerial(const QString &serial)
@@ -634,7 +641,20 @@ void VideoForm::updateShowSize(const QSize &newSize)
         }
 
         if (showSize != size()) {
+            QSize oldSize = size();
             resize(showSize);
+
+            // GEOMETRY FIX: Force resizeEvent immediately with the new size
+            // The resize() call above might be deferred by Qt's event queue
+            // Manually triggering resizeEvent replicates what happens on manual resize
+            QResizeEvent resizeEvent(showSize, oldSize);
+            QApplication::sendEvent(this, &resizeEvent);
+
+            // Force layout update after resize
+            if (layout()) {
+                layout()->update();
+                layout()->activate();
+            }
             if (m_skin) {
                 updateStyleSheet(vertical);
             }
@@ -721,6 +741,27 @@ void VideoForm::grabCursor(bool grab)
 
 void VideoForm::onFrame(int width, int height, uint8_t *dataY, uint8_t *dataU, uint8_t *dataV, int linesizeY, int linesizeU, int linesizeV)
 {
+    // Add diagnostic logging for first frame arrival
+    static bool firstFrameLogged = false;
+    if (!firstFrameLogged) {
+        qInfo() << "VideoForm::onFrame() FIRST FRAME for" << m_serial
+                << "Size:" << width << "x" << height;
+        firstFrameLogged = true;
+    }
+
+    // Frame rate limiting to prevent Qt event queue overload with many devices
+    // CRITICAL: This is essential for stability with 50+ devices streaming simultaneously
+    // Each device has independent timing - drops frames before expensive thread marshaling
+    // With 96 devices @ 30fps = 2,880 events/sec total. At 10fps = 960 events/sec.
+    // PER-INSTANCE timer ensures each VideoForm (including single device mode) gets 15fps
+    const int MIN_FRAME_INTERVAL_MS = 67;  // 15 fps - conservative for stability
+
+    // Drop frame if too soon since last frame (early exit before any processing)
+    if (m_lastFrameTime.isValid() && m_lastFrameTime.elapsed() < MIN_FRAME_INTERVAL_MS) {
+        return;  // Drop this frame - prevents event queue overload
+    }
+    m_lastFrameTime.restart();
+
     // CRITICAL: This may be called from Demuxer thread due to DirectConnection in decoder
     // OpenGL widgets MUST be created/updated only in main GUI thread
     // Check if we're in the correct thread

@@ -1,6 +1,7 @@
 #ifndef VIDEOFORM_H
 #define VIDEOFORM_H
 
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QWidget>
 #include <memory>
@@ -144,6 +145,8 @@ private:
     bool m_skin = true;
     QPoint m_fullScreenBeforePos;
     QString m_serial;
+    QElapsedTimer m_lastFrameTime;  // Per-instance frame rate limiter
+    int m_frameCounter = 0;  // Per-instance frame counter for diagnostics
 
     //Whether to display the toolbar when connecting a device.
     bool show_toolbar = true;

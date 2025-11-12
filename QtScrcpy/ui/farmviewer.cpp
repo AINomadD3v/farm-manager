@@ -44,6 +44,7 @@ FarmViewer::FarmViewer(QWidget *parent)
     , m_currentQualityTier(qsc::DeviceConnectionPool::TIER_HIGH)
     , m_screenshotAllBtn(nullptr)
     , m_syncActionBtn(nullptr)
+    , m_streamAllBtn(nullptr)
     , m_statusLabel(nullptr)
     , m_connectionProgressBar(nullptr)
     , m_isConnecting(false)
@@ -301,11 +302,31 @@ void FarmViewer::setupUI()
     m_screenshotAllBtn = new QPushButton("Screenshot All");
     m_screenshotAllBtn->setMaximumWidth(120);
     connect(m_screenshotAllBtn, &QPushButton::clicked, this, &FarmViewer::onScreenshotAllClicked);
-    
+
     m_syncActionBtn = new QPushButton("Sync Actions");
     m_syncActionBtn->setMaximumWidth(120);
     connect(m_syncActionBtn, &QPushButton::clicked, this, &FarmViewer::onSyncActionClicked);
-    
+
+    // CLICK-TO-STREAM: Stream All button
+    m_streamAllBtn = new QPushButton("Stream All Devices");
+    m_streamAllBtn->setMaximumWidth(150);
+    m_streamAllBtn->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #0a84ff;"
+        "  color: white;"
+        "  font-weight: bold;"
+        "  border-radius: 4px;"
+        "  padding: 6px 12px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #0066cc;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #004999;"
+        "}"
+    );
+    connect(m_streamAllBtn, &QPushButton::clicked, this, &FarmViewer::onStreamAllClicked);
+
     // Status label
     m_statusLabel = new QLabel("No devices connected");
     m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
@@ -319,12 +340,13 @@ void FarmViewer::setupUI()
     // Add to toolbar
     m_toolbarLayout->addWidget(m_screenshotAllBtn);
     m_toolbarLayout->addWidget(m_syncActionBtn);
+    m_toolbarLayout->addWidget(m_streamAllBtn);  // CLICK-TO-STREAM: Add Stream All button
     m_toolbarLayout->addWidget(m_connectionProgressBar);
     m_toolbarLayout->addStretch();
     m_toolbarLayout->addWidget(m_statusLabel);
-    
+
     // UI IMPROVEMENT: Scroll area for device grid with better styling
-    m_scrollArea = new QScrollArea();
+    m_scrollArea = new FarmScrollArea();
     m_scrollArea->setWidgetResizable(false); // CRITICAL: false for proper scrolling with fixed-size widgets
     m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -541,10 +563,18 @@ void FarmViewer::updateStatus()
         m_statusLabel->setText("No devices detected");
         m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
     } else {
-        // SIMPLIFIED: Just show device count (no quality info since we're not streaming)
-        m_statusLabel->setText(QString("%1 %2 detected (ready for connection)")
-            .arg(deviceCount)
-            .arg(deviceCount == 1 ? "device" : "devices"));
+        // CLICK-TO-STREAM: Show device count and connection status
+        QString statusText;
+        if (m_activeConnections == 0) {
+            statusText = QString("%1 %2 ready (click to stream)")
+                .arg(deviceCount)
+                .arg(deviceCount == 1 ? "device" : "devices");
+        } else {
+            statusText = QString("Streaming: %1/%2 devices")
+                .arg(m_activeConnections)
+                .arg(deviceCount);
+        }
+        m_statusLabel->setText(statusText);
         m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
     }
 }
@@ -793,6 +823,96 @@ void FarmViewer::onSyncActionClicked()
     // TODO: Implement sync action dialog
 }
 
+void FarmViewer::onStreamAllClicked()
+{
+    qInfo() << "========================================";
+    qInfo() << "FarmViewer: Stream All button clicked";
+    qInfo() << "========================================";
+
+    // Get all detected devices
+    QStringList allSerials = m_deviceForms.keys();
+    int totalDevices = allSerials.size();
+
+    if (totalDevices == 0) {
+        qWarning() << "FarmViewer: No devices available to stream";
+        return;
+    }
+
+    // Filter out already-connected devices
+    QStringList devicesToConnect;
+    for (const QString& serial : allSerials) {
+        if (!m_connectedDevices.contains(serial)) {
+            devicesToConnect.append(serial);
+        }
+    }
+
+    int alreadyConnected = totalDevices - devicesToConnect.size();
+    int toConnect = devicesToConnect.size();
+
+    qInfo() << "FarmViewer: Stream All status:";
+    qInfo() << "  Total devices:" << totalDevices;
+    qInfo() << "  Already connected:" << alreadyConnected;
+    qInfo() << "  To connect:" << toConnect;
+
+    if (toConnect == 0) {
+        qInfo() << "FarmViewer: All devices already streaming";
+        QMessageBox::information(this, "Stream All",
+            QString("All %1 devices are already streaming.").arg(totalDevices));
+        return;
+    }
+
+    // Check if we would exceed the connection limit
+    if (m_activeConnections + toConnect > MAX_CONCURRENT_STREAMS) {
+        int available = MAX_CONCURRENT_STREAMS - m_activeConnections;
+        qWarning() << "FarmViewer: Stream All would exceed connection limit";
+        qWarning() << "  Current connections:" << m_activeConnections;
+        qWarning() << "  Requested:" << toConnect;
+        qWarning() << "  Available slots:" << available;
+
+        QMessageBox::warning(this, "Connection Limit",
+            QString("Cannot stream all devices. Connection limit: %1\n"
+                    "Current connections: %2\n"
+                    "Available slots: %3\n"
+                    "Devices to connect: %4")
+                .arg(MAX_CONCURRENT_STREAMS)
+                .arg(m_activeConnections)
+                .arg(available)
+                .arg(toConnect));
+        return;
+    }
+
+    // Show confirmation dialog
+    QMessageBox::StandardButton reply = QMessageBox::question(this,
+        "Stream All Devices",
+        QString("Connect and stream %1 device(s)?\n\n"
+                "This will start video streaming for all disconnected devices.\n"
+                "GPU resources will be used for each stream.")
+            .arg(toConnect),
+        QMessageBox::Yes | QMessageBox::No);
+
+    if (reply != QMessageBox::Yes) {
+        qInfo() << "FarmViewer: Stream All cancelled by user";
+        return;
+    }
+
+    // Update UI to show batch connection in progress
+    m_statusLabel->setText(QString("Connecting %1 devices...").arg(toConnect));
+    m_connectionProgressBar->setMaximum(toConnect);
+    m_connectionProgressBar->setValue(0);
+    m_connectionProgressBar->setVisible(true);
+
+    qInfo() << "FarmViewer: Starting batch connection for" << toConnect << "devices";
+
+    // Connect all devices using the existing batch connection logic
+    m_batchSize = 3;  // Connect 3 devices at a time for safety
+    m_batchDelayMs = 3000;  // 3 second delay between batches
+    m_batchConnectionIndex = 0;
+
+    connectDevicesInBatches(devicesToConnect, 0);
+
+    qInfo() << "========================================";
+}
+
 void FarmViewer::autoDetectAndConnectDevices()
 {
     qDebug() << "FarmViewer: Starting device auto-detection using existing Dialog pattern...";
@@ -922,72 +1042,27 @@ void FarmViewer::processDetectedDevices(const QStringList& devices)
     qInfo() << "  Final grid:" << m_gridRows << "x" << m_gridCols;
     qInfo() << "  Tile size:" << tileSize;
 
-    // PHASE 1: Batch connection logic based on quality tiers
-    // Determine batch size and delay based on device count and quality tier
-    int deviceCount = newDevices.size();
-
-    // Calculate batch parameters based on quality tier
-    // CRITICAL: Delays increased to allow decoders to fully initialize
-    // Each decoder needs time to: receive SPS/PPS config packet, initialize codec context,
-    // and start decoding before next batch overwhelms the system
-    if (deviceCount <= 5) {
-        // TIER_ULTRA (1-5): Connect all at once, no delay
-        m_batchSize = 5;
-        m_batchDelayMs = 0;
-    } else if (deviceCount <= 20) {
-        // TIER_HIGH (6-20): Batch of 5, 2000ms delay between batches
-        // Smaller batches with longer delays for better initialization
-        m_batchSize = 5;
-        m_batchDelayMs = 2000;
-    } else if (deviceCount <= 50) {
-        // TIER_MEDIUM (21-50): Batch of 8, 2500ms delay
-        m_batchSize = 8;
-        m_batchDelayMs = 2500;
-    } else if (deviceCount <= 100) {
-        // TIER_LOW (51-100): Batch of 10, 3000ms delay
-        // Critical for 78 devices - give each batch time to stabilize
-        m_batchSize = 10;
-        m_batchDelayMs = 3000;
-    } else {
-        // TIER_MINIMAL (100+): Batch of 15, 4000ms delay
-        m_batchSize = 15;
-        m_batchDelayMs = 4000;
-    }
-
-    int totalBatches = (deviceCount + m_batchSize - 1) / m_batchSize;  // Ceiling division
-
+    // CLICK-TO-STREAM ARCHITECTURE: Do NOT auto-connect devices
+    // All devices are displayed with placeholders showing "Ready to Connect"
+    // User must click on a device tile to initiate streaming
+    // This prevents GPU resource exhaustion with 96+ devices
     qInfo() << "========================================";
-    qInfo() << "PHASE 1 BATCH CONNECTION STRATEGY";
-    qInfo() << "  Total devices:" << deviceCount;
-    qInfo() << "  Quality tier:" << m_currentQualityProfile.description;
-    qInfo() << "  Batch size:" << m_batchSize;
-    qInfo() << "  Batch delay:" << m_batchDelayMs << "ms";
-    qInfo() << "  Total batches:" << totalBatches;
+    qInfo() << "CLICK-TO-STREAM MODE: Devices ready for manual connection";
+    qInfo() << "  Total devices displayed:" << totalDevices;
+    qInfo() << "  Auto-connect: DISABLED (click device tiles to stream)";
+    qInfo() << "  Max concurrent streams:" << MAX_CONCURRENT_STREAMS;
     qInfo() << "========================================";
 
-    if (deviceCount > 0) {
-        m_statusLabel->setText(QString("Connecting %1 %2 in %3 %4...")
-            .arg(deviceCount)
-            .arg(deviceCount == 1 ? "device" : "devices")
-            .arg(totalBatches)
-            .arg(totalBatches == 1 ? "batch" : "batches"));
-        m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
+    // Update status to show devices are ready but not connected
+    m_statusLabel->setText(QString("%1 %2 ready (click to stream)")
+        .arg(totalDevices)
+        .arg(totalDevices == 1 ? "device" : "devices"));
+    m_statusLabel->setStyleSheet("color: #0a84ff; font-size: 12px; font-weight: bold;");
 
-        // Show progress bar
-        m_connectionProgressBar->setMaximum(deviceCount);
-        m_connectionProgressBar->setValue(0);
-        m_connectionProgressBar->setVisible(true);
+    // Hide progress bar (not needed for click-to-stream)
+    m_connectionProgressBar->setVisible(false);
 
-        // Connect devices in batches
-        m_batchConnectionIndex = 0;
-        connectDevicesInBatches(newDevices, 0);
-    } else {
-        // No devices to connect
-        m_statusLabel->setText("No devices detected");
-        m_statusLabel->setStyleSheet("color: #888; font-size: 12px;");
-    }
-
-    qInfo() << "FarmViewer: Batch connection initiated for" << deviceCount << "devices";
+    qInfo() << "FarmViewer: All devices displayed, ready for click-to-stream";
     qInfo() << "========================================";
 }
 

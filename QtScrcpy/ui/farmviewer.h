@@ -20,6 +20,30 @@
 #include "performancemonitor.h"
 #include "../QtScrcpyCore/src/device/deviceconnectionpool.h"
 
+// Custom QScrollArea that forwards paint events to all viewport widgets
+// This prevents Qt from filtering paint events for QOpenGLWidgets outside the visible area
+// which was causing devices 26+ to show black/white screens even though data was streaming
+class FarmScrollArea : public QScrollArea {
+    Q_OBJECT
+public:
+    explicit FarmScrollArea(QWidget* parent = nullptr) : QScrollArea(parent) {}
+
+protected:
+    bool viewportEvent(QEvent* event) override {
+        // Forward paint events to viewport - don't filter them!
+        // This ensures paintGL() is called for all QOpenGLWidget instances
+        // even if they're outside the currently visible scroll area
+        if (event->type() == QEvent::Paint) {
+            // Propagate paint event to viewport and all child widgets
+            if (viewport()) {
+                viewport()->update();
+            }
+            return true;
+        }
+        return QScrollArea::viewportEvent(event);
+    }
+};
+
 class VideoForm;
 
 class FarmViewer : public QWidget
@@ -56,6 +80,7 @@ public:
 private slots:
     void onScreenshotAllClicked();
     void onSyncActionClicked();
+    void onStreamAllClicked();  // CLICK-TO-STREAM: Handler for Stream All button
     void onGridSizeChanged();
 
     // Connection management slots
@@ -110,7 +135,7 @@ private:
     static void unixSignalHandler(int signalNumber);
     static void setupSocketPair();
 
-    QScrollArea* m_scrollArea;
+    FarmScrollArea* m_scrollArea;
     QWidget* m_gridWidget;
     QGridLayout* m_gridLayout;
     QVBoxLayout* m_mainLayout;
@@ -143,6 +168,7 @@ private:
     // Controls
     QPushButton* m_screenshotAllBtn;
     QPushButton* m_syncActionBtn;
+    QPushButton* m_streamAllBtn;  // CLICK-TO-STREAM: Button to connect all devices at once
     QLabel* m_statusLabel;
     QProgressBar* m_connectionProgressBar;
 

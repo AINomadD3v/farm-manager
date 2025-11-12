@@ -117,6 +117,8 @@ QSize QYUVOpenGLWidget::sizeHint() const
 void QYUVOpenGLWidget::setFrameSize(const QSize &frameSize)
 {
     if (m_frameSize != frameSize) {
+        qInfo() << "QYUVOpenGLWidget::setFrameSize() - Size changed from" << m_frameSize << "to" << frameSize
+                << "Widget:" << (void*)this << "Parent:" << (void*)parent();
         m_frameSize = frameSize;
         m_needUpdate = true;
         // inittexture immediately
@@ -151,6 +153,14 @@ void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *data
             glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(linesizeY));
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_frameSize.width(), m_frameSize.height(),
                            GL_LUMINANCE, GL_UNSIGNED_BYTE, dataY);
+
+            GLenum err = glGetError();
+            if (err != GL_NO_ERROR) {
+                qCritical() << "QYUVOpenGLWidget::updateTextures() - Y plane upload FAILED!"
+                           << "Error:" << QString::number(err, 16)
+                           << "Size:" << m_frameSize
+                           << "Stride:" << linesizeY;
+            }
         }
 
         // Update U plane
@@ -159,6 +169,14 @@ void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *data
             glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(linesizeU));
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_frameSize.width() / 2, m_frameSize.height() / 2,
                            GL_LUMINANCE, GL_UNSIGNED_BYTE, dataU);
+
+            GLenum err = glGetError();
+            if (err != GL_NO_ERROR) {
+                qCritical() << "QYUVOpenGLWidget::updateTextures() - U plane upload FAILED!"
+                           << "Error:" << QString::number(err, 16)
+                           << "Size:" << m_frameSize
+                           << "Stride:" << linesizeU;
+            }
         }
 
         // Update V plane
@@ -167,7 +185,19 @@ void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *data
             glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(linesizeV));
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_frameSize.width() / 2, m_frameSize.height() / 2,
                            GL_LUMINANCE, GL_UNSIGNED_BYTE, dataV);
+
+            GLenum err = glGetError();
+            if (err != GL_NO_ERROR) {
+                qCritical() << "QYUVOpenGLWidget::updateTextures() - V plane upload FAILED!"
+                           << "Error:" << QString::number(err, 16)
+                           << "Size:" << m_frameSize
+                           << "Stride:" << linesizeV;
+            }
         }
+
+        // CRITICAL: Reset GL_UNPACK_ROW_LENGTH to prevent state pollution
+        // across shared OpenGL contexts (prevents "half green and distorted" bug with 96 devices)
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
         doneCurrent();
         update();
@@ -257,7 +287,21 @@ void QYUVOpenGLWidget::initShader()
 
 void QYUVOpenGLWidget::initTextures()
 {
-    // 创建纹理
+    qInfo() << "QYUVOpenGLWidget::initTextures() - Initializing textures with size:" << m_frameSize
+            << "Widget:" << (void*)this << "Widget size:" << size();
+
+    // FIX: Pre-allocate buffers with proper YUV420 black color to prevent green screen
+    // YUV(0, 0, 0) converts to GREEN in RGB! Proper black is Y=0x00, U=0x80, V=0x80
+    int ySize = m_frameSize.width() * m_frameSize.height();
+    int uvSize = ySize / 4;  // U and V planes are 1/4 size (width/2 * height/2)
+
+    quint8* initialYData = new quint8[ySize];
+    quint8* initialUVData = new quint8[uvSize];
+
+    memset(initialYData, 0x00, ySize);     // Y = 0 (black luminance)
+    memset(initialUVData, 0x80, uvSize);   // U,V = 128 (neutral chrominance - prevents green!)
+
+    // 创建纹理 - Y plane
     glGenTextures(1, &m_texture[0]);
     glBindTexture(GL_TEXTURE_2D, m_texture[0]);
     // 设置纹理缩放时的策略
@@ -266,16 +310,18 @@ void QYUVOpenGLWidget::initTextures()
     // 设置st方向上纹理超出坐标时的显示策略
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width(), m_frameSize.height(), 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width(), m_frameSize.height(), 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialYData);
 
+    // U plane
     glGenTextures(1, &m_texture[1]);
     glBindTexture(GL_TEXTURE_2D, m_texture[1]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialUVData);
 
+    // V plane
     glGenTextures(1, &m_texture[2]);
     glBindTexture(GL_TEXTURE_2D, m_texture[2]);
     // 设置纹理缩放时的策略
@@ -284,7 +330,11 @@ void QYUVOpenGLWidget::initTextures()
     // 设置st方向上纹理超出坐标时的显示策略
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, m_frameSize.width() / 2, m_frameSize.height() / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, initialUVData);
+
+    // Cleanup allocated buffers
+    delete[] initialYData;
+    delete[] initialUVData;
 
     m_textureInited = true;
 }

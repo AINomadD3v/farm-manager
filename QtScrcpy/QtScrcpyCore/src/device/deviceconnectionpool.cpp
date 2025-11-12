@@ -211,11 +211,16 @@ StreamQualityProfile DeviceConnectionPool::getOptimalStreamSettings(int totalDev
     case TIER_HIGH:
         return StreamQualityProfile(720, 4000000, 30, "High (6-20 devices)");
     case TIER_MEDIUM:
-        return StreamQualityProfile(480, 2000000, 30, "Medium (21-50 devices)");
+        // Aggressive scaling: reduced from 480p to 360p for improved stability
+        return StreamQualityProfile(360, 1500000, 20, "Medium (21-50 devices - Stability focused)");
     case TIER_LOW:
-        return StreamQualityProfile(360, 1000000, 15, "Low (51-100 devices)");
+        // Aggressive scaling: reduced from 360p to 240p for 51-100 devices (e.g., 96 device deployments)
+        // This significantly reduces memory/GPU load while maintaining device monitoring capability
+        return StreamQualityProfile(240, 800000, 15, "Low (51-100 devices - Maximum stability)");
     case TIER_MINIMAL:
-        return StreamQualityProfile(240, 500000, 10, "Minimal (100+ devices)");
+        // Aggressive scaling: reduced from 240p to 180p for 100+ devices
+        // Minimal bitrate and FPS for extreme multi-device scenarios
+        return StreamQualityProfile(180, 400000, 10, "Minimal (100+ devices - Maximum stability)");
     default:
         return StreamQualityProfile(720, 4000000, 30, "Default");
     }
