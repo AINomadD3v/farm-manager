@@ -24,7 +24,8 @@ SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 
 # Source directory (where the built binaries are)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="${SCRIPT_DIR}/output/x64/RelWithDebInfo"
+# Use Release build by default (smaller, optimized binary)
+SOURCE_DIR="${SCRIPT_DIR}/output/x64/Release"
 
 echo -e "${BLUE}NixOS Installation Configuration:${NC}"
 echo "  Source: ${SOURCE_DIR}"
