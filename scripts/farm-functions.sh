@@ -22,8 +22,19 @@ build_release() {
     cd ../../..
   fi
 
+  # Ensure build directory exists
+  mkdir -p build/release
   cd build/release
+
+  # Always run cmake to pick up any source file changes
   cmake ../.. -DCMAKE_BUILD_TYPE=Release -DQT_FIND_PRIVATE_MODULES=ON
+
+  # Clean build if FORCE_CLEAN_BUILD is set
+  if [ "${FORCE_CLEAN_BUILD:-false}" = "true" ]; then
+    echo "🧹 Forcing clean rebuild..."
+    make clean
+  fi
+
   make -j$(nproc)
   cd ../..
 

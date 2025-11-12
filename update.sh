@@ -36,6 +36,7 @@ show_help() {
     echo "  -i, --install           Automatically install after rebuild"
     echo "  -s, --skip-changes      Skip showing git changes"
     echo "  -d, --debug             Build in Debug mode instead of Release"
+    echo "  -c, --clean             Force clean rebuild (removes build cache)"
     echo "  --no-pull              Skip git pull (rebuild only)"
     echo ""
     echo "Environment variables:"
@@ -46,12 +47,14 @@ show_help() {
     echo "  $0                      # Update, rebuild, prompt for install"
     echo "  $0 --install            # Update, rebuild, and auto-install"
     echo "  $0 --no-pull            # Just rebuild without updating"
+    echo "  $0 --clean              # Force clean rebuild (ensures all fixes applied)"
     echo ""
     exit 0
 }
 
 # Parse command line arguments
 SKIP_PULL=false
+FORCE_CLEAN_BUILD=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -67,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--debug)
             BUILD_TYPE="Debug"
+            shift
+            ;;
+        -c|--clean)
+            FORCE_CLEAN_BUILD=true
             shift
             ;;
         --no-pull)
@@ -175,6 +182,15 @@ echo ""
 if [ -f "scripts/farm-functions.sh" ]; then
     echo -e "${CYAN}Loading build environment...${NC}"
     source scripts/farm-functions.sh
+
+    # Force clean rebuild if requested or if we pulled new changes (to ensure all fixes are compiled)
+    if [ "$FORCE_CLEAN_BUILD" = true ]; then
+        echo -e "${CYAN}Clean rebuild requested - ensuring all fixes are applied${NC}"
+        export FORCE_CLEAN_BUILD=true
+    elif [ "$SKIP_PULL" = false ] && [ "${COMMITS_BEHIND:-0}" -gt 0 ]; then
+        echo -e "${CYAN}New changes detected - forcing clean rebuild to ensure all fixes are applied${NC}"
+        export FORCE_CLEAN_BUILD=true
+    fi
 
     # Build based on BUILD_TYPE
     if [ "$BUILD_TYPE" = "Debug" ]; then
